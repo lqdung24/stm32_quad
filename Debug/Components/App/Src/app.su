@@ -1,0 +1,15 @@
+../Components/App/Src/app.c:64:6:App_SetSpi	24	static
+../Components/App/Src/app.c:71:6:App_SetUsbTransmit	16	static
+../Components/App/Src/app.c:76:6:App_SetActivityLed	16	static
+../Components/App/Src/app.c:82:6:App_Init	16	static
+../Components/App/Src/app.c:105:6:App_Process	16	static
+../Components/App/Src/app.c:144:13:App_TryInitICM20948	24	static
+../Components/App/Src/app.c:211:13:App_CalibrateGyro	152	static
+../Components/App/Src/app.c:268:13:App_UpdateAttitude	104	static
+../Components/App/Src/app.c:371:13:App_UpdateMagnetometer	56	static
+../Components/App/Src/app.c:419:13:App_ReportICM20948	192	static
+../Components/App/Src/app.c:488:13:App_ReportMagDebug	216	static
+../Components/App/Src/app.c:534:13:App_UsbSend	16	static
+../Components/App/Src/app.c:549:16:App_GyroRawToMdps	16	static
+../Components/App/Src/app.c:554:16:App_TempRawToCentiC	16	static
+../Components/App/Src/app.c:559:16:App_MagRawToCentiUt	16	static

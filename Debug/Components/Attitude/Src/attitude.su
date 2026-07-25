@@ -1,0 +1,7 @@
+../Components/Attitude/Src/attitude.c:32:22:Attitude_MapSensorRawToBody	40	static
+../Components/Attitude/Src/attitude.c:43:22:Attitude_MapMagSensorRawToBody	40	static
+../Components/Attitude/Src/attitude.c:54:22:Attitude_CalibrateMagBodyCentiUt	48	static
+../Components/Attitude/Src/attitude.c:73:21:Attitude_CalibrateAccelBodyG	64	static
+../Components/Attitude/Src/attitude.c:87:21:Attitude_AccelRawToBodyG	80	static
+../Components/Attitude/Src/attitude.c:103:21:Attitude_GyroRawToBodyRadS	96	static
+../Components/Attitude/Src/attitude.c:126:21:Attitude_SpecificForceToGravity	64	static
