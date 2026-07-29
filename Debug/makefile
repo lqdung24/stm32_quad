@@ -16,9 +16,12 @@ RM := rm -rf
 -include Drivers/STM32H7xx_HAL_Driver/Src/subdir.mk
 -include Core/Startup/subdir.mk
 -include Core/Src/subdir.mk
--include Components/Mahony/Src/subdir.mk
+-include Components/MotorPWM/Src/subdir.mk
 -include Components/Mahony9/Src/subdir.mk
+-include Components/Mahony/Src/subdir.mk
 -include Components/ICM20948/Src/subdir.mk
+-include Components/DroneProtocol/Src/subdir.mk
+-include Components/DroneControl/Src/subdir.mk
 -include Components/Attitude/Src/subdir.mk
 -include Components/App/Src/subdir.mk
 -include objects.mk

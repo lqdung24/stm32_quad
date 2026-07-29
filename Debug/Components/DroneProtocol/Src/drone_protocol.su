@@ -1,0 +1,15 @@
+../Components/DroneProtocol/Src/drone_protocol.c:5:17:read_u16_le	16	static
+../Components/DroneProtocol/Src/drone_protocol.c:10:16:read_i16_le	16	static
+../Components/DroneProtocol/Src/drone_protocol.c:15:17:read_u32_le	16	static
+../Components/DroneProtocol/Src/drone_protocol.c:23:13:write_u16_le	16	static
+../Components/DroneProtocol/Src/drone_protocol.c:29:13:write_i16_le	16	static
+../Components/DroneProtocol/Src/drone_protocol.c:34:13:write_u32_le	16	static
+../Components/DroneProtocol/Src/drone_protocol.c:42:13:encode_header	16	static
+../Components/DroneProtocol/Src/drone_protocol.c:55:28:decode_header	32	static
+../Components/DroneProtocol/Src/drone_protocol.c:112:13:append_crc	24	static
+../Components/DroneProtocol/Src/drone_protocol.c:119:10:DroneProtocol_Crc16CcittFalse	32	static
+../Components/DroneProtocol/Src/drone_protocol.c:143:21:DroneProtocol_EncodeControl	40	static
+../Components/DroneProtocol/Src/drone_protocol.c:181:21:DroneProtocol_DecodeControl	40	static
+../Components/DroneProtocol/Src/drone_protocol.c:222:21:DroneProtocol_EncodeStatus	40	static
+../Components/DroneProtocol/Src/drone_protocol.c:257:21:DroneProtocol_DecodeStatus	40	static
+../Components/DroneProtocol/Src/drone_protocol.c:297:6:DroneProtocol_IsSequenceNewer	16	static

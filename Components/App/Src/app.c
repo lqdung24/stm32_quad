@@ -1,6 +1,7 @@
 #include "app.h"
 
 #include "attitude.h"
+#include "drone_control.h"
 #include "icm20948.h"
 #include "mahony9.h"
 #include <stdio.h>
@@ -13,13 +14,17 @@
 #define APP_MAG_DEBUG_PERIOD_MS             1000U
 #define APP_GYRO_CALIBRATION_DISCARD_SAMPLES 200U
 #define APP_GYRO_CALIBRATION_SAMPLES        1000U
-
+#define APP_UART_LOG_BYTES_PER_LINE         16U
+#define APP_USB_TX_OK                       0U
 static SPI_HandleTypeDef *app_spi;
 static GPIO_TypeDef *app_icm_cs_port;
 static uint16_t app_icm_cs_pin;
 static App_UsbTransmitFn app_usb_transmit;
 static GPIO_TypeDef *app_activity_led_port;
 static uint16_t app_activity_led_pin;
+static TIM_HandleTypeDef *app_motor_timer;
+static UART_HandleTypeDef *app_control_uart;
+static volatile uint8_t app_uart_log_usb_busy;
 
 static ICM20948_Handle_t icm20948;
 static ICM20948_RawData_t icm20948_raw;
@@ -49,6 +54,7 @@ static const Mahony9_Config_t mahony9_config = {
   .mag_max_norm = 7000.0f
 };
 static char usb_tx_buffer[384];
+static char uart_log_tx_buffer[80];
 
 static void App_TryInitICM20948(void);
 static void App_CalibrateGyro(void);
@@ -56,7 +62,11 @@ static void App_UpdateAttitude(void);
 static void App_UpdateMagnetometer(void);
 static void App_ReportICM20948(void);
 static void App_ReportMagDebug(void);
+static void App_IcmLog(const char *text, int length);
+static void App_FlushControlUartLog(void);
+#if APP_ICM20948_LOG_ENABLE
 static void App_UsbSend(const char *text, int length);
+#endif
 static int32_t App_GyroRawToMdps(int32_t raw);
 static int32_t App_TempRawToCentiC(int16_t raw);
 static int32_t App_MagRawToCentiUt(int32_t raw);
@@ -79,10 +89,36 @@ void App_SetActivityLed(GPIO_TypeDef *port, uint16_t pin)
   app_activity_led_pin = pin;
 }
 
+void App_SetMotorTimer(TIM_HandleTypeDef *htim)
+{
+  app_motor_timer = htim;
+}
+
+void App_SetControlUart(UART_HandleTypeDef *huart)
+{
+  app_control_uart = huart;
+}
+
+void App_OnUsbReceive(const uint8_t *data, uint32_t length)
+{
+  /*
+   * USB CDC is diagnostics-only. Safety-critical control is accepted only
+   * through the validated Drone Control Packet path on USART1.
+   */
+  (void)data;
+  (void)length;
+}
+
+void App_OnUsbTransmitComplete(void)
+{
+  app_uart_log_usb_busy = 0U;
+}
+
 void App_Init(void)
 {
   uint32_t now_ms;
 
+  DroneControl_Init(app_control_uart, app_motor_timer);
   App_TryInitICM20948();
   App_CalibrateGyro();
   App_UpdateMagnetometer();
@@ -105,6 +141,9 @@ void App_Init(void)
 void App_Process(void)
 {
   uint32_t now_ms = HAL_GetTick();
+
+  DroneControl_Process(now_ms);
+  App_FlushControlUartLog();
 
   if ((icm20948_status != ICM20948_OK) &&
       ((now_ms - icm20948_last_reinit_ms) >= APP_ICM20948_REINIT_PERIOD_MS))
@@ -134,11 +173,64 @@ void App_Process(void)
     }
   }
 
-  if ((now_ms - icm20948_last_report_ms) >= APP_ICM20948_REPORT_PERIOD_MS)
+  if ((APP_ICM20948_LOG_ENABLE != 0U) &&
+      ((now_ms - icm20948_last_report_ms) >= APP_ICM20948_REPORT_PERIOD_MS))
   {
     icm20948_last_report_ms = now_ms;
     App_ReportICM20948();
   }
+}
+
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size)
+{
+  DroneControl_OnUartRxEvent(huart, size);
+}
+
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+  DroneControl_OnUartError(huart);
+}
+
+static void App_FlushControlUartLog(void)
+{
+#if APP_UART1_RX_LOG_ENABLE
+  static const char hex[] = "0123456789ABCDEF";
+  uint8_t data[APP_UART_LOG_BYTES_PER_LINE];
+  size_t count;
+  size_t i;
+  size_t length;
+
+  if ((app_usb_transmit == NULL) || (app_uart_log_usb_busy != 0U))
+  {
+    return;
+  }
+
+  count = DroneControl_ReadUartRxLog(data, sizeof(data));
+  if (count == 0U)
+  {
+    return;
+  }
+
+  length = (size_t)snprintf(uart_log_tx_buffer,
+                            sizeof(uart_log_tx_buffer),
+                            "UART1 RX (%u):", (unsigned int)count);
+  for (i = 0U;
+       (i < count) && ((length + 3U) < sizeof(uart_log_tx_buffer));
+       ++i)
+  {
+    uart_log_tx_buffer[length++] = ' ';
+    uart_log_tx_buffer[length++] = hex[data[i] >> 4U];
+    uart_log_tx_buffer[length++] = hex[data[i] & 0x0FU];
+  }
+  uart_log_tx_buffer[length++] = '\r';
+  uart_log_tx_buffer[length++] = '\n';
+
+  if (app_usb_transmit((uint8_t *)uart_log_tx_buffer,
+                       (uint16_t)length) == APP_USB_TX_OK)
+  {
+    app_uart_log_usb_busy = 1U;
+  }
+#endif
 }
 
 static void App_TryInitICM20948(void)
@@ -170,7 +262,7 @@ static void App_TryInitICM20948(void)
                       "ICM20948 WHO_AM_I read error=%d\r\n",
                       (int)who_status);
   }
-  App_UsbSend(usb_tx_buffer, length);
+  App_IcmLog(usb_tx_buffer, length);
 
   if (icm20948_status == ICM20948_OK)
   {
@@ -178,7 +270,7 @@ static void App_TryInitICM20948(void)
     Mahony9_Init(&mahony9, &mahony9_config);
     length = snprintf(usb_tx_buffer, sizeof(usb_tx_buffer),
                       "ICM20948 init OK\r\n");
-    App_UsbSend(usb_tx_buffer, length);
+    App_IcmLog(usb_tx_buffer, length);
 
     icm20948_mag_init_status = ICM20948_InitMagnetometer(&icm20948, &mag_wia2);
     icm20948_mag_status = icm20948_mag_init_status;
@@ -205,7 +297,7 @@ static void App_TryInitICM20948(void)
                       (int)icm20948_status);
   }
 
-  App_UsbSend(usb_tx_buffer, length);
+  App_IcmLog(usb_tx_buffer, length);
 }
 
 static void App_CalibrateGyro(void)
@@ -262,7 +354,7 @@ static void App_CalibrateGyro(void)
                     icm20948_gyro_bias.y,
                     icm20948_gyro_bias.z,
                     (unsigned long)count);
-  App_UsbSend(usb_tx_buffer, length);
+  App_IcmLog(usb_tx_buffer, length);
 }
 
 static void App_UpdateAttitude(void)
@@ -473,7 +565,7 @@ static void App_ReportICM20948(void)
                     (long)(attitude.roll * 100.0f),
                     (long)(attitude.pitch * 100.0f),
                     (long)(attitude.yaw * 100.0f));
-  App_UsbSend(usb_tx_buffer, length);
+  App_IcmLog(usb_tx_buffer, length);
 
   if ((icm20948_mag_raw.x == 0) &&
       (icm20948_mag_raw.y == 0) &&
@@ -528,9 +620,20 @@ static void App_ReportMagDebug(void)
                       debug.slv4_ctrl_after);
   }
 
-  App_UsbSend(usb_tx_buffer, length);
+  App_IcmLog(usb_tx_buffer, length);
 }
 
+static void App_IcmLog(const char *text, int length)
+{
+#if APP_ICM20948_LOG_ENABLE
+  App_UsbSend(text, length);
+#else
+  (void)text;
+  (void)length;
+#endif
+}
+
+#if APP_ICM20948_LOG_ENABLE
 static void App_UsbSend(const char *text, int length)
 {
   if ((app_usb_transmit == NULL) || (text == NULL) || (length <= 0))
@@ -545,6 +648,7 @@ static void App_UsbSend(const char *text, int length)
 
   (void)app_usb_transmit((uint8_t *)text, (uint16_t)length);
 }
+#endif
 
 static int32_t App_GyroRawToMdps(int32_t raw)
 {

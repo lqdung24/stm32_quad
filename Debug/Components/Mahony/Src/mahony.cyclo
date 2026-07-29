@@ -1,0 +1,5 @@
+../Components/Mahony/Src/mahony.c:11:6:Mahony_Init	3
+../Components/Mahony/Src/mahony.c:29:6:Mahony_InitFromAccel	3
+../Components/Mahony/Src/mahony.c:76:6:Mahony_Update	7
+../Components/Mahony/Src/mahony.c:155:6:Mahony_GetEulerDegrees	4
+../Components/Mahony/Src/mahony.c:178:14:Mahony_Clamp	3

@@ -1,0 +1,8 @@
+../Components/Mahony9/Src/mahony9.c:18:6:Mahony9_Init	3
+../Components/Mahony9/Src/mahony9.c:37:6:Mahony9_InitFromAccelMag	6
+../Components/Mahony9/Src/mahony9.c:149:6:Mahony9_Update	1
+../Components/Mahony9/Src/mahony9.c:163:6:Mahony9_UpdateImu	1
+../Components/Mahony9/Src/mahony9.c:176:6:Mahony9_GetEulerDegrees	4
+../Components/Mahony9/Src/mahony9.c:206:13:Mahony9_UpdateInternal	10
+../Components/Mahony9/Src/mahony9.c:379:13:Mahony9_NormAccepted	6
+../Components/Mahony9/Src/mahony9.c:396:14:Mahony9_Clamp	3

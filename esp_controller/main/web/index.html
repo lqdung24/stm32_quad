@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Drone Control</title>
+  <style>
+    :root { color-scheme:dark; font-family:system-ui,sans-serif; }
+    * { box-sizing:border-box; }
+    [hidden] { display:none !important; }
+    html, body { width:100%; height:100%; overflow:hidden; overscroll-behavior:none; }
+    body { margin:0; background:#0d131b; color:#edf3fa; touch-action:manipulation; }
+    main {
+      width:100%; height:100dvh; padding:
+        max(8px,env(safe-area-inset-top))
+        max(12px,env(safe-area-inset-right))
+        max(8px,env(safe-area-inset-bottom))
+        max(12px,env(safe-area-inset-left));
+      display:grid; grid-template-rows:auto minmax(0,1fr) auto; gap:8px;
+    }
+    .topbar { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    h1 { margin:0; font-size:clamp(1rem,2.5vw,1.35rem); }
+    .sub { margin:0; color:#93a4b7; font-size:.78rem; }
+    #fullscreen { min-height:36px; min-width:44px; padding:0 12px; background:#2d4055; }
+    .dashboard { min-height:0; display:grid; grid-template-columns:minmax(220px,.9fr) minmax(0,1.45fr); gap:8px; }
+    .panel { min-height:0; background:#18222e; border-radius:14px; padding:10px 14px; }
+    .telemetry { overflow:auto; }
+    .row { display:flex; justify-content:space-between; gap:12px; padding:3px 0; }
+    .value { font-weight:700; text-align:right; }
+    .good { color:#50dda0; } .bad { color:#ff7777; } .warn { color:#ffc765; }
+    .throttle { text-align:center; display:flex; flex-direction:column; justify-content:center; }
+    .throttle output { display:block; font-size:clamp(2rem,6vw,4rem); line-height:1; font-weight:900; }
+    input[type=range] { width:100%; height:72px; accent-color:#4bb7ff; touch-action:none; }
+    .hint { color:#93a4b7; font-size:.8rem; margin:0 0 4px; }
+    .motors { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:6px; }
+    .motor { padding:7px 4px; background:#101923; border-radius:9px; font-size:.78rem; }
+    .motor strong { display:block; margin-top:2px; color:#50dda0; font-size:.95rem; }
+    .actions { display:grid; grid-template-columns:1fr 1fr 1.25fr; gap:8px; }
+    button { border:0; border-radius:12px; min-height:56px; color:white;
+      font-size:1rem; font-weight:800; touch-action:manipulation; }
+    #arm { background:#207c52; } #disarm { background:#415064; }
+    #stop { background:#bd3038; font-size:1.1rem; }
+    #message { position:absolute; left:50%; bottom:max(72px,env(safe-area-inset-bottom)); transform:translateX(-50%);
+      width:min(92%,720px); margin:0; padding:5px 10px; border-radius:8px;
+      text-align:center; color:#ffcf9f; background:#0d131bd9; pointer-events:none; font-size:.82rem; }
+    .launch, .rotate-warning {
+      position:fixed; inset:0; z-index:20; display:grid; place-items:center;
+      padding:24px; background:#0d131bf2; text-align:center;
+    }
+    .launch-card { max-width:520px; }
+    .launch h2, .rotate-warning h2 { margin:0 0 8px; }
+    .launch p, .rotate-warning p { color:#a9b8c8; }
+    #enter { width:100%; padding:10px 20px; background:#207c52; }
+    .rotate-warning { display:none; z-index:15; }
+    .phone { font-size:3rem; display:block; transform:rotate(90deg); margin-bottom:18px; }
+    @media (orientation:portrait) {
+      .rotate-warning { display:grid; }
+      .launch { z-index:25; }
+    }
+    @media (max-height:480px) {
+      main { gap:5px; padding-top:5px; padding-bottom:5px; }
+      .panel { padding:7px 11px; }
+      .row { padding:1px 0; font-size:.82rem; }
+      input[type=range] { height:54px; }
+      button { min-height:46px; }
+      .hint { display:none; }
+      .motor { padding:4px; }
+      #message { bottom:56px; }
+    }
+  </style>
+</head>
+<body>
+<div id="launch" class="launch">
+  <div class="launch-card">
+    <h2>Drone Control</h2>
+    <p>Tháo toàn bộ cánh quạt trước khi thử. Chạm để vào toàn màn hình ngang.</p>
+    <button id="enter">VÀO CHẾ ĐỘ ĐIỀU KHIỂN</button>
+  </div>
+</div>
+<div class="rotate-warning">
+  <div>
+    <span class="phone">▯</span>
+    <h2>Xoay điện thoại nằm ngang</h2>
+    <p>Trình duyệt này không tự khóa được hướng màn hình.</p>
+  </div>
+</div>
+<main>
+  <header class="topbar">
+    <div><h1>Drone Control · 4 Motors</h1><p class="sub">Collective throttle tối đa 500/1000</p></div>
+    <button id="fullscreen" aria-label="Toàn màn hình">⛶</button>
+  </header>
+
+  <div class="dashboard">
+    <section class="panel telemetry">
+      <div class="row"><span>WebSocket</span><span id="ws" class="value bad">DISCONNECTED</span></div>
+      <div class="row"><span>Phone TX session / sequence</span><span id="phone-tx" class="value">- / -</span></div>
+      <div class="row"><span>Phone TX throttle</span><span id="phone-throttle" class="value">0 / 500</span></div>
+      <div class="row"><span>STM32 link</span><span id="stm" class="value bad">OFFLINE</span></div>
+      <div class="row"><span>STM32 state</span><span id="state" class="value">UNKNOWN</span></div>
+      <div class="row"><span>Session / sequence</span><span id="sequence" class="value">- / -</span></div>
+      <div class="row"><span>UART packet rate</span><span id="rate" class="value">0 pkt/s</span></div>
+      <div class="row"><span>Failsafe</span><span id="failsafe" class="value">UNKNOWN</span></div>
+    </section>
+
+    <section class="panel throttle">
+      <span>Throttle chung 4 motor</span>
+      <output id="requested">0 / 500</output>
+      <input id="slider" type="range" min="0" max="500" step="5" value="0" disabled>
+      <p class="hint">Dead-man: giữ tay trên slider; thả tay sẽ về 0 ngay.</p>
+      <div class="row"><span>STM32 đã áp dụng</span><span id="applied" class="value">0 / 500</span></div>
+      <div class="motors">
+        <div class="motor">MOTOR 1<strong class="motor-pwm">1000 µs</strong></div>
+        <div class="motor">MOTOR 2<strong class="motor-pwm">1000 µs</strong></div>
+        <div class="motor">MOTOR 3<strong class="motor-pwm">1000 µs</strong></div>
+        <div class="motor">MOTOR 4<strong class="motor-pwm">1000 µs</strong></div>
+      </div>
+    </section>
+  </div>
+
+  <section class="actions">
+    <button id="arm">GIỮ 1 GIÂY ĐỂ ARM</button>
+    <button id="disarm">DISARM / RESET</button>
+    <button id="stop">DỪNG KHẨN CẤP</button>
+  </section>
+  <p id="message"></p>
+</main>
+
+<script>
+  const MAGIC = 0xA55A, VERSION = 1, CONTROL = 1, STATUS = 2;
+  const ARM = 1, ESTOP = 2, FAILSAFE_ACTIVE = 1 << 9;
+  const stateNames = ['BOOT', 'DISARMED', 'ARMED', 'FAILSAFE', 'ERROR'];
+  const $ = id => document.getElementById(id);
+  let socket, session = 0, sequence = 0, armRequested = false;
+  let emergency = true, deadman = false, requested = 0;
+  let lastStatusAt = 0, lastStatus = null, armTimer = null;
+  let reconnectTimer = null, controllerBusy = false;
+
+  async function enterControlMode() {
+    try {
+      if (!document.fullscreenElement && document.documentElement.requestFullscreen)
+        await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+    } catch (_) {}
+    try {
+      if (screen.orientation?.lock)
+        await screen.orientation.lock('landscape');
+    } catch (_) {}
+    $('launch').hidden = true;
+  }
+
+  $('enter').addEventListener('click', enterControlMode);
+  $('fullscreen').addEventListener('click', enterControlMode);
+
+  function crc16(data, length) {
+    let crc = 0xffff;
+    for (let i = 0; i < length; i++) {
+      crc ^= data[i] << 8;
+      for (let bit = 0; bit < 8; bit++)
+        crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+    }
+    return crc;
+  }
+
+  function createControl() {
+    const data = new Uint8Array(30), view = new DataView(data.buffer);
+    const flags = emergency ? ESTOP : (armRequested ? ARM : 0);
+    const throttle = (!emergency && armRequested && deadman) ? requested : 0;
+    view.setUint16(0, MAGIC, true);
+    view.setUint8(2, VERSION); view.setUint8(3, CONTROL);
+    view.setUint16(4, sequence++ & 0xffff, true);
+    view.setUint16(6, session, true);
+    view.setUint16(8, flags, true);
+    view.setUint8(10, 12); view.setUint8(11, 0);
+    view.setUint32(12, Math.floor(performance.now()) >>> 0, true);
+    view.setUint16(16, throttle, true);
+    view.setUint16(28, crc16(data, 28), true);
+    return data;
+  }
+
+  function sendNow() {
+    if (socket?.readyState !== WebSocket.OPEN) return;
+    const packet = createControl();
+    socket.send(packet);
+    const view = new DataView(packet.buffer);
+    $('phone-tx').textContent =
+      `${view.getUint16(6, true)} / ${view.getUint16(4, true)}`;
+    $('phone-throttle').textContent =
+      `${view.getUint16(16, true)} / 500`;
+  }
+
+  function newSession() {
+    const random = new Uint16Array(1);
+    crypto.getRandomValues(random);
+    session = random[0] || 1;
+    sequence = 0;
+    armRequested = false;
+    emergency = false;
+    deadman = false;
+    requested = 0;
+    $('slider').value = 0;
+    $('requested').value = '0 / 500';
+  }
+
+  function scheduleReconnect() {
+    if (controllerBusy || reconnectTimer !== null) return;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, 1000);
+  }
+
+  function connect() {
+    if (socket &&
+        (socket.readyState === WebSocket.CONNECTING ||
+         socket.readyState === WebSocket.OPEN)) return;
+
+    const currentSocket = new WebSocket(`ws://${location.host}/ws`);
+    socket = currentSocket;
+    currentSocket.binaryType = 'arraybuffer';
+    currentSocket.onopen = () => {
+      if (socket !== currentSocket) return;
+      newSession();
+      $('ws').textContent = 'CONNECTED';
+      $('ws').className = 'value good';
+      $('message').textContent =
+        'Đã kết nối ESP32. Xác nhận STM32 ONLINE rồi giữ ARM 1 giây.';
+      sendNow();
+    };
+    currentSocket.onmessage = event => {
+      if (socket !== currentSocket) return;
+      if (typeof event.data === 'string') {
+        if (event.data === 'CONTROLLER_BUSY') {
+          controllerBusy = true;
+          armRequested = false; deadman = false; requested = 0;
+          $('ws').textContent = 'BUSY';
+          $('ws').className = 'value warn';
+          $('slider').disabled = true;
+          $('message').textContent =
+            'ESP32 đang được điều khiển bởi thiết bị hoặc tab khác. ' +
+            'Hãy đóng phiên đó rồi tải lại trang này.';
+          currentSocket.close(4001, 'Controller busy');
+        }
+        return;
+      }
+      decodeStatus(new Uint8Array(event.data));
+    };
+    currentSocket.onclose = () => {
+      if (socket !== currentSocket) return;
+      armRequested = false; deadman = false; requested = 0;
+      $('slider').disabled = true;
+      socket = null;
+      if (!controllerBusy) {
+        $('ws').textContent = 'DISCONNECTED';
+        $('ws').className = 'value bad';
+        scheduleReconnect();
+      }
+    };
+    currentSocket.onerror = () => currentSocket.close();
+  }
+
+  function decodeStatus(data) {
+    if (data.length !== 32) return;
+    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    if (view.getUint16(0, true) !== MAGIC || view.getUint8(2) !== VERSION ||
+        view.getUint8(3) !== STATUS || view.getUint8(10) !== 14 ||
+        view.getUint16(30, true) !== crc16(data, 30)) return;
+    const state = view.getUint8(24), errors = view.getUint16(25, true);
+    lastStatusAt = performance.now();
+    lastStatus = { state, errors };
+    $('state').textContent = stateNames[state] || 'INVALID';
+    $('state').className = `value ${state === 2 ? 'good' : state >= 3 ? 'bad' : ''}`;
+    $('sequence').textContent = `${view.getUint16(6, true)} / ${view.getUint16(16, true)}`;
+    $('applied').textContent = `${view.getUint16(20, true)} / 500`;
+    const pwm = `${view.getUint16(22, true)} µs`;
+    document.querySelectorAll('.motor-pwm').forEach(item => item.textContent = pwm);
+    $('rate').textContent = `${view.getUint16(27, true)} pkt/s`;
+    const failed = state === 3 || (errors & FAILSAFE_ACTIVE);
+    $('failsafe').textContent = failed ? 'ACTIVE' : 'CLEAR';
+    $('failsafe').className = `value ${failed ? 'bad' : 'good'}`;
+  }
+
+  $('slider').addEventListener('pointerdown', event => {
+    if (!$('slider').disabled) {
+      deadman = true;
+      $('slider').setPointerCapture(event.pointerId);
+    }
+  });
+  $('slider').addEventListener('input', () => {
+    requested = Number($('slider').value);
+    $('requested').value = `${requested} / 500`;
+  });
+  function releaseDeadman() {
+    if (!deadman) return;
+    deadman = false; requested = 0; $('slider').value = 0;
+    $('requested').value = '0 / 500'; sendNow();
+  }
+  $('slider').addEventListener('pointerup', releaseDeadman);
+  $('slider').addEventListener('pointercancel', releaseDeadman);
+  $('slider').addEventListener('lostpointercapture', releaseDeadman);
+
+  function canArm() {
+    return socket?.readyState === WebSocket.OPEN &&
+      requested === 0 && !emergency;
+  }
+  $('arm').addEventListener('pointerdown', () => {
+    if (!canArm()) {
+      $('message').textContent =
+        'Không thể ARM test: WebSocket phải kết nối và throttle phải bằng 0.';
+      return;
+    }
+    $('message').textContent = 'Tiếp tục giữ để ARM…';
+    armTimer = setTimeout(() => {
+      armRequested = true; sendNow();
+      $('slider').disabled = false;
+      $('message').textContent =
+        'Đã ARM; giữ và kéo slider để điều khiển đồng thời 4 motor.';
+      armTimer = null;
+    }, 1000);
+  });
+  function cancelArmHold() {
+    if (armTimer) { clearTimeout(armTimer); armTimer = null; $('message').textContent = 'Đã hủy ARM.'; }
+  }
+  $('arm').addEventListener('pointerup', cancelArmHold);
+  $('arm').addEventListener('pointerleave', cancelArmHold);
+  $('arm').addEventListener('pointercancel', cancelArmHold);
+
+  $('disarm').onclick = () => {
+    armRequested = false; emergency = false; deadman = false; requested = 0;
+    $('slider').value = 0; $('slider').disabled = true;
+    $('requested').value = '0 / 500'; sendNow();
+    $('message').textContent = 'Đã DISARM cả 4 motor.';
+  };
+  $('stop').onclick = () => {
+    armRequested = false; emergency = true; deadman = false; requested = 0;
+    $('slider').value = 0; $('slider').disabled = true;
+    $('requested').value = '0 / 500';
+    sendNow();
+    $('message').textContent = 'EMERGENCY STOP đã gửi ngay.';
+  };
+
+  setInterval(sendNow, 25);
+  setInterval(() => {
+    const online = performance.now() - lastStatusAt < 300;
+    $('stm').textContent = online ? 'ONLINE' : 'OFFLINE';
+    $('stm').className = `value ${online ? 'good' : 'bad'}`;
+  }, 100);
+  connect();
+</script>
+</body>
+</html>

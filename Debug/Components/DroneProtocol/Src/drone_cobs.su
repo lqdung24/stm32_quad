@@ -1,0 +1,2 @@
+../Components/DroneProtocol/Src/drone_cobs.c:3:8:DroneCobs_Encode	40	static
+../Components/DroneProtocol/Src/drone_cobs.c:59:8:DroneCobs_Decode	40	static
