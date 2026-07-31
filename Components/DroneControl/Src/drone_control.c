@@ -13,11 +13,15 @@
 #define CONTROL_UART_ENCODED_FRAME_SIZE     64U
 #define CONTROL_ESC_MIN_PULSE_US            1000U
 #define CONTROL_ESC_MAX_PULSE_US            2000U
+#define CONTROL_DEG_TO_RAD                   0.01745329252f
+#define CONTROL_ROLL_PITCH_MAX_RATE_RAD_S   (200.0f * CONTROL_DEG_TO_RAD)
+#define CONTROL_YAW_MAX_RATE_RAD_S           (150.0f * CONTROL_DEG_TO_RAD)
 
 typedef struct
 {
   UART_HandleTypeDef *uart;
   MotorPwm_Handle_t motors;
+  RateControl rate_control;
   volatile uint16_t rx_head;
   volatile uint16_t rx_tail;
   volatile uint16_t log_head;
@@ -60,6 +64,44 @@ static void disarm_output(void);
 static bool apply_throttle(uint16_t requested);
 static void send_status(uint32_t now_ms);
 
+/*
+ * Initial bench gains. Output is a normalized mixer correction, not us.
+ * These values must be tuned for the actual airframe before flight.
+ */
+static const RateControlConfig rate_control_config = {
+    .pid = {
+        [RATE_CONTROL_ROLL] = {
+            .kp = 45.0f,
+            .ki = 20.0f,
+            .kd = 0.8f,
+            .integral_limit = 60.0f,
+            .output_limit = 200.0f,
+            .derivative_cutoff_hz = 20.0f,
+        },
+        [RATE_CONTROL_PITCH] = {
+            .kp = 45.0f,
+            .ki = 20.0f,
+            .kd = 0.8f,
+            .integral_limit = 60.0f,
+            .output_limit = 200.0f,
+            .derivative_cutoff_hz = 20.0f,
+        },
+        [RATE_CONTROL_YAW] = {
+            .kp = 35.0f,
+            .ki = 10.0f,
+            .kd = 0.0f,
+            .integral_limit = 50.0f,
+            .output_limit = 150.0f,
+            .derivative_cutoff_hz = 0.0f,
+        },
+    },
+    .maximum_rate_rad_s = {
+        [RATE_CONTROL_ROLL] = CONTROL_ROLL_PITCH_MAX_RATE_RAD_S,
+        [RATE_CONTROL_PITCH] = CONTROL_ROLL_PITCH_MAX_RATE_RAD_S,
+        [RATE_CONTROL_YAW] = CONTROL_YAW_MAX_RATE_RAD_S,
+    },
+};
+
 void DroneControl_Init(UART_HandleTypeDef *uart, TIM_HandleTypeDef *motor_timer)
 {
   const MotorPwm_Config_t motor_config = {
@@ -82,6 +124,7 @@ void DroneControl_Init(UART_HandleTypeDef *uart, TIM_HandleTypeDef *motor_timer)
   control.last_status_ms = control.rate_window_ms;
 
   if ((uart == NULL) || (motor_timer == NULL) ||
+      !RateControl_Init(&control.rate_control, &rate_control_config) ||
       !MotorPwm_Init(&control.motors, &motor_config))
   {
     control.state = DRONE_STATE_ERROR;
@@ -93,6 +136,36 @@ void DroneControl_Init(UART_HandleTypeDef *uart, TIM_HandleTypeDef *motor_timer)
     control.initialized = true;
   }
   start_uart_receive();
+}
+
+void DroneControl_UpdateBodyRates(float roll_rad_s,
+                                  float pitch_rad_s,
+                                  float yaw_rad_s,
+                                  float dt_s)
+{
+  const float measured_rad_s[RATE_CONTROL_AXIS_COUNT] = {
+      roll_rad_s,
+      pitch_rad_s,
+      yaw_rad_s,
+  };
+
+  if (!control.initialized ||
+      (control.state != DRONE_STATE_ARMED) ||
+      (control.applied_throttle == 0U))
+  {
+    RateControl_Reset(&control.rate_control);
+    return;
+  }
+
+  if (!RateControl_Update(&control.rate_control, measured_rad_s, dt_s))
+  {
+    RateControl_Reset(&control.rate_control);
+  }
+}
+
+bool DroneControl_GetRateControlDebug(RateControlDebug *debug)
+{
+  return RateControl_GetDebug(&control.rate_control, debug);
 }
 
 void DroneControl_Process(uint32_t now_ms)
@@ -285,6 +358,10 @@ static void process_control_command(const DroneControlCommand *command,
   ++control.packets_this_second;
   control.error_flags &= (uint16_t)~DRONE_ERROR_UART_LINK_LOST;
   control.requested_throttle = command->throttle;
+  RateControl_SetCommand(&control.rate_control,
+                         command->roll,
+                         command->pitch,
+                         command->yaw);
 
   if (control.state == DRONE_STATE_ERROR)
   {
@@ -365,6 +442,7 @@ static void enter_failsafe(uint16_t reason)
 static void disarm_output(void)
 {
   MotorPwm_Disarm(&control.motors);
+  RateControl_Reset(&control.rate_control);
   control.applied_throttle = 0U;
 }
 

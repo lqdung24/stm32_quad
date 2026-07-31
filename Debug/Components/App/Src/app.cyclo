@@ -13,10 +13,10 @@
 ../Components/App/Src/app.c:236:13:App_TryInitICM20948	7
 ../Components/App/Src/app.c:303:13:App_CalibrateGyro	6
 ../Components/App/Src/app.c:360:13:App_UpdateAttitude	11
-../Components/App/Src/app.c:463:13:App_UpdateMagnetometer	7
-../Components/App/Src/app.c:511:13:App_ReportICM20948	7
-../Components/App/Src/app.c:580:13:App_ReportMagDebug	2
-../Components/App/Src/app.c:626:13:App_IcmLog	1
-../Components/App/Src/app.c:653:16:App_GyroRawToMdps	1
-../Components/App/Src/app.c:658:16:App_TempRawToCentiC	1
-../Components/App/Src/app.c:663:16:App_MagRawToCentiUt	1
+../Components/App/Src/app.c:472:13:App_UpdateMagnetometer	7
+../Components/App/Src/app.c:520:13:App_ReportICM20948	7
+../Components/App/Src/app.c:589:13:App_ReportMagDebug	2
+../Components/App/Src/app.c:635:13:App_IcmLog	1
+../Components/App/Src/app.c:662:16:App_GyroRawToMdps	1
+../Components/App/Src/app.c:667:16:App_TempRawToCentiC	1
+../Components/App/Src/app.c:672:16:App_MagRawToCentiUt	1

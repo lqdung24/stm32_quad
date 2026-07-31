@@ -14,10 +14,14 @@
 #define ICM20948_REG_LP_CONFIG         0x05U
 #define ICM20948_REG_INT_PIN_CFG       0x0FU
 #define ICM20948_REG_I2C_MST_STATUS    0x17U
+#define ICM20948_REG_INT_STATUS_1      0x1AU
 #define ICM20948_REG_ACCEL_XOUT_H      0x2DU
 #define ICM20948_REG_EXT_SLV_SENS_DATA_00 0x3BU
 
+#define ICM20948_REG_GYRO_SMPLRT_DIV   0x00U
 #define ICM20948_REG_GYRO_CONFIG_1     0x01U
+#define ICM20948_REG_ACCEL_SMPLRT_DIV_1 0x10U
+#define ICM20948_REG_ACCEL_SMPLRT_DIV_2 0x11U
 #define ICM20948_REG_ACCEL_CONFIG      0x14U
 
 #define ICM20948_REG_I2C_MST_CTRL      0x01U
@@ -40,6 +44,7 @@
 #define ICM20948_PWR1_DEVICE_RESET     0x80U
 #define ICM20948_PWR1_CLKSEL_AUTO      0x01U
 #define ICM20948_DLPF_ENABLE           0x01U
+#define ICM20948_RAW_DATA_READY        0x01U
 
 #define ICM20948_I2C_SLV_READ_BIT      0x80U
 #define ICM20948_I2C_SLV_EN            0x80U
@@ -241,6 +246,92 @@ ICM20948_Status_t ICM20948_SetGyroRange(ICM20948_Handle_t *dev, ICM20948_GyroRan
     dev->gyro_range = range;
   }
 
+  return status;
+}
+
+ICM20948_Status_t ICM20948_ConfigureMotion(
+    ICM20948_Handle_t *dev,
+    const ICM20948_MotionConfig_t *config)
+{
+  ICM20948_Status_t status;
+  uint8_t accel_config;
+  uint8_t gyro_config;
+
+  if ((dev == NULL) || (config == NULL) ||
+      (config->accel_range > ICM20948_ACCEL_RANGE_16G) ||
+      (config->gyro_range > ICM20948_GYRO_RANGE_2000DPS) ||
+      (config->accel_sample_rate_divider > 4095U) ||
+      (config->accel_dlpf_config > 7U) ||
+      (config->gyro_dlpf_config > 7U))
+  {
+    return ICM20948_ERROR_PARAM;
+  }
+
+  accel_config =
+      (uint8_t)((config->accel_dlpf_config << 3U) |
+                ((uint8_t)config->accel_range << 1U) |
+                ICM20948_DLPF_ENABLE);
+  gyro_config =
+      (uint8_t)((config->gyro_dlpf_config << 3U) |
+                ((uint8_t)config->gyro_range << 1U) |
+                ICM20948_DLPF_ENABLE);
+
+  status = ICM20948_WriteRegister(dev,
+                                  ICM20948_BANK_2,
+                                  ICM20948_REG_GYRO_SMPLRT_DIV,
+                                  config->gyro_sample_rate_divider);
+  if (status != ICM20948_OK) return status;
+
+  status = ICM20948_WriteRegister(dev,
+                                  ICM20948_BANK_2,
+                                  ICM20948_REG_GYRO_CONFIG_1,
+                                  gyro_config);
+  if (status != ICM20948_OK) return status;
+
+  status = ICM20948_WriteRegister(
+      dev,
+      ICM20948_BANK_2,
+      ICM20948_REG_ACCEL_SMPLRT_DIV_1,
+      (uint8_t)((config->accel_sample_rate_divider >> 8U) & 0x0FU));
+  if (status != ICM20948_OK) return status;
+
+  status = ICM20948_WriteRegister(
+      dev,
+      ICM20948_BANK_2,
+      ICM20948_REG_ACCEL_SMPLRT_DIV_2,
+      (uint8_t)config->accel_sample_rate_divider);
+  if (status != ICM20948_OK) return status;
+
+  status = ICM20948_WriteRegister(dev,
+                                  ICM20948_BANK_2,
+                                  ICM20948_REG_ACCEL_CONFIG,
+                                  accel_config);
+  if (status != ICM20948_OK) return status;
+
+  dev->accel_range = config->accel_range;
+  dev->gyro_range = config->gyro_range;
+  return ICM20948_SelectBank(dev, ICM20948_BANK_0);
+}
+
+ICM20948_Status_t ICM20948_IsRawDataReady(ICM20948_Handle_t *dev,
+                                          uint8_t *ready)
+{
+  ICM20948_Status_t status;
+  uint8_t value;
+
+  if ((dev == NULL) || (ready == NULL))
+  {
+    return ICM20948_ERROR_PARAM;
+  }
+
+  status = ICM20948_ReadRegister(dev,
+                                 ICM20948_BANK_0,
+                                 ICM20948_REG_INT_STATUS_1,
+                                 &value);
+  if (status == ICM20948_OK)
+  {
+    *ready = ((value & ICM20948_RAW_DATA_READY) != 0U) ? 1U : 0U;
+  }
   return status;
 }
 

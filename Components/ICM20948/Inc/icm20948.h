@@ -15,6 +15,12 @@ extern "C" {
 #define ICM20948_ACCEL_2G_LSB_PER_G    16384.0f
 #endif
 
+#define ICM20948_ACCEL_4G_LSB_PER_G     8192.0f
+#define ICM20948_GYRO_250DPS_LSB_PER_DPS 131.0f
+#define ICM20948_GYRO_500DPS_LSB_PER_DPS 65.5f
+#define ICM20948_GYRO_1000DPS_LSB_PER_DPS 32.8f
+#define ICM20948_GYRO_2000DPS_LSB_PER_DPS 16.4f
+
 typedef enum
 {
   ICM20948_OK = 0,
@@ -109,6 +115,16 @@ typedef struct
   ICM20948_GyroRange_t gyro_range;
 } ICM20948_Handle_t;
 
+typedef struct
+{
+  ICM20948_AccelRange_t accel_range;
+  ICM20948_GyroRange_t gyro_range;
+  uint16_t accel_sample_rate_divider;
+  uint8_t gyro_sample_rate_divider;
+  uint8_t accel_dlpf_config;
+  uint8_t gyro_dlpf_config;
+} ICM20948_MotionConfig_t;
+
 ICM20948_Status_t ICM20948_Init(ICM20948_Handle_t *dev,
                                 SPI_HandleTypeDef *hspi,
                                 GPIO_TypeDef *ncs_port,
@@ -119,6 +135,11 @@ void ICM20948_SetTimeout(ICM20948_Handle_t *dev, uint32_t timeout_ms);
 ICM20948_Status_t ICM20948_ReadWhoAmI(ICM20948_Handle_t *dev, uint8_t *who_am_i);
 ICM20948_Status_t ICM20948_SetAccelRange(ICM20948_Handle_t *dev, ICM20948_AccelRange_t range);
 ICM20948_Status_t ICM20948_SetGyroRange(ICM20948_Handle_t *dev, ICM20948_GyroRange_t range);
+ICM20948_Status_t ICM20948_ConfigureMotion(
+    ICM20948_Handle_t *dev,
+    const ICM20948_MotionConfig_t *config);
+ICM20948_Status_t ICM20948_IsRawDataReady(ICM20948_Handle_t *dev,
+                                          uint8_t *ready);
 ICM20948_Status_t ICM20948_ReadRaw(ICM20948_Handle_t *dev, ICM20948_RawData_t *data);
 ICM20948_Status_t ICM20948_ReadScaled(ICM20948_Handle_t *dev, ICM20948_Data_t *data);
 ICM20948_Status_t ICM20948_InitMagnetometer(ICM20948_Handle_t *dev, uint8_t *wia2);

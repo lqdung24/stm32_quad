@@ -1,0 +1,9 @@
+../Components/DroneControl/Src/rate_control.c:19:6:RateControl_Init	16	static
+../Components/DroneControl/Src/rate_control.c:33:6:RateControl_Reset	16	static
+../Components/DroneControl/Src/rate_control.c:44:6:RateControl_SetCommand	40	static
+../Components/DroneControl/Src/rate_control.c:73:6:RateControl_Update	40	static
+../Components/DroneControl/Src/rate_control.c:111:6:RateControl_GetDebug	24	static
+../Components/DroneControl/Src/rate_control.c:123:13:config_valid	24	static
+../Components/DroneControl/Src/rate_control.c:151:14:clampf	24	static
+../Components/DroneControl/Src/rate_control.c:164:13:clear_dynamic_state	16	static
+../Components/DroneControl/Src/rate_control.c:176:14:update_axis	64	static
