@@ -5,7 +5,15 @@ The page sends binary control packets over WebSocket. The ESP32-S3 validates
 and forwards them over UART to the STM32H7, which is the only controller that
 can drive an ESC.
 
-The web page retains the no-prop motor selector used during calibration, but
+The web page has two control modes selected by one button. **Joystick** is a
+landscape, Mode-2 style controller: the left stick commands throttle/yaw and
+the right stick commands pitch/roll. The left stick retains throttle when
+released while yaw returns to center; the right stick returns both axes to
+center. Touch the current left-stick knob before dragging so throttle cannot
+jump from an accidental touch. Changing web modes always disarms and clears
+all four commands.
+
+The page also retains the no-prop motor selector used during calibration, but
 the current STM32 build has raw threshold-test mode disabled. Keep **All
 motors** selected for normal control; the rate PID and Quad-X mixer now drive
 all four outputs. One shared ARM action gates the outputs, and changing
@@ -85,12 +93,13 @@ For a command-line verification build with STM32CubeIDE 2.1:
 1. Keep propellers removed and the ESC motor supply disconnected.
 2. Flash and start both boards; connect the UART and common ground.
 3. Join `DRONE_TEST`, open `http://192.168.4.1`, and confirm STM32 telemetry.
-4. Select **Cả 4 motor** while disarmed. Per-motor selection is reserved for a
-   firmware build that explicitly enables raw threshold-test mode.
-5. Press **Disarm / Reset**, then hold **Arm** once for one second at zero
-   throttle. The single ARM action covers all four outputs.
-6. Hold the dead-man control while moving the slider. Releasing it commands
-   zero immediately.
+4. Press **Mở joystick** and rotate the phone to landscape. Switching mode
+   disarms the controller and initializes throttle at zero.
+5. Press **Disarm**, then hold **Arm** once for one second with both sticks at
+   neutral and throttle at zero. The single ARM action covers all four outputs.
+6. Drag the left stick upward from its bottom position for throttle and
+   sideways for yaw. Use the right stick for pitch and roll. Test all signs on
+   a restrained rig before installing propellers.
 7. Confirm that closing the page or disconnecting Wi-Fi produces fail-safe
    within 300 ms and requires disarm before re-arming.
 

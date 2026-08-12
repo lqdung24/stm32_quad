@@ -5,171 +5,273 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <title>Drone Motor Test</title>
+  <title>Drone Controller</title>
   <style>
-    :root { color-scheme:dark; font-family:system-ui,-apple-system,sans-serif; }
+    :root {
+      color-scheme:dark; font-family:system-ui,-apple-system,sans-serif;
+      --bg:#091018; --panel:#14202d; --panel-2:#0e1823; --line:#304357;
+      --text:#edf5fc; --muted:#91a5b8; --blue:#45b8ff; --green:#4ee0a0;
+      --yellow:#ffc96b; --red:#ff626b;
+    }
     * { box-sizing:border-box; }
     [hidden] { display:none !important; }
-    html,body { min-height:100%; }
+    html,body { width:100%; min-height:100%; }
     body {
-      margin:0; background:#0d131b; color:#edf3fa;
-      overscroll-behavior:none; touch-action:manipulation;
+      margin:0; overflow-x:hidden; background:
+        radial-gradient(circle at 50% -20%,#19334b 0,transparent 45%),var(--bg);
+      color:var(--text); overscroll-behavior:none; touch-action:manipulation;
+      -webkit-user-select:none; user-select:none;
     }
     main {
-      width:min(1180px,100%); min-height:100dvh; margin:auto;
-      padding:max(10px,env(safe-area-inset-top))
-              max(12px,env(safe-area-inset-right))
-              max(12px,env(safe-area-inset-bottom))
-              max(12px,env(safe-area-inset-left));
-      display:flex; flex-direction:column; gap:10px;
+      width:min(1240px,100%); min-height:100dvh; margin:auto;
+      padding:max(7px,env(safe-area-inset-top))
+              max(10px,env(safe-area-inset-right))
+              max(8px,env(safe-area-inset-bottom))
+              max(10px,env(safe-area-inset-left));
+      display:flex; flex-direction:column; gap:8px;
     }
-    .topbar { display:flex; align-items:center; justify-content:space-between; gap:10px; }
-    h1 { margin:0; font-size:clamp(1.05rem,3.5vw,1.45rem); }
-    .sub { margin:2px 0 0; color:#93a4b7; font-size:.8rem; }
-    .dashboard { display:grid; grid-template-columns:minmax(250px,.85fr) minmax(360px,1.4fr); gap:10px; }
-    .panel { background:#18222e; border-radius:14px; padding:12px 14px; }
-    .row { display:flex; justify-content:space-between; gap:12px; padding:4px 0; }
-    .value { font-weight:750; text-align:right; }
-    .good { color:#50dda0; } .bad { color:#ff7777; } .warn { color:#ffc765; }
     button,select,input { font:inherit; }
     button {
-      border:0; border-radius:12px; min-height:48px; padding:8px 12px;
-      color:#fff; font-weight:800; touch-action:manipulation;
+      border:0; border-radius:11px; min-height:42px; padding:7px 11px;
+      color:#fff; font-weight:850; letter-spacing:.015em; touch-action:manipulation;
     }
-    button:disabled,select:disabled { opacity:.45; }
-    #fullscreen { min-width:46px; min-height:38px; background:#2d4055; }
-    .mode-title { margin:0 0 7px; font-weight:800; }
-    .mode-grid { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
-    .mode-grid label {
-      display:flex; align-items:center; justify-content:center; gap:7px;
-      min-height:44px; padding:8px; border:1px solid #3b4c60;
-      border-radius:10px; background:#101923; font-weight:750;
+    button:disabled,select:disabled { opacity:.42; }
+    .topbar { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .brand { min-width:0; }
+    h1 { margin:0; font-size:clamp(1rem,2.8vw,1.35rem); line-height:1.1; }
+    .sub { margin:2px 0 0; color:var(--muted); font-size:.73rem; }
+    .top-actions { display:flex; gap:7px; }
+    #mode-toggle { min-width:142px; background:#176a9a; }
+    #fullscreen { min-width:43px; background:#2b3d50; font-size:1.15rem; }
+    #content { flex:1; min-height:0; display:grid; gap:9px; align-items:stretch; }
+    #content.pilot { grid-template-columns:minmax(210px,1fr) minmax(190px,.7fr) minmax(210px,1fr); }
+    #content.test { grid-template-columns:minmax(245px,.78fr) minmax(380px,1.42fr); }
+    .panel {
+      min-width:0; border:1px solid #26394b; border-radius:15px;
+      background:linear-gradient(155deg,#172635,#111c28); box-shadow:0 10px 30px #0003;
     }
-    .mode-grid label.selected { border-color:#4bb7ff; background:#173650; }
-    .mode-grid input { accent-color:#4bb7ff; }
-    .motor-picker { margin-top:8px; }
-    .motor-picker select {
-      width:100%; min-height:44px; padding:7px 10px; color:#edf3fa;
-      border:1px solid #3b4c60; border-radius:10px; background:#101923;
+
+    /* Compact information and flight actions in the middle column. */
+    #status-panel { padding:10px 12px; display:flex; flex-direction:column; gap:7px; }
+    .mode-badge {
+      align-self:center; padding:4px 9px; border:1px solid #38627e;
+      border-radius:99px; color:#bde7ff; background:#102b3e; font-size:.7rem; font-weight:900;
     }
-    .throttle-panel { text-align:center; }
-    .throttle-panel output {
-      display:block; margin:4px 0; font-size:clamp(2.2rem,10vw,4.5rem);
-      line-height:1; font-weight:900;
+    .status-list { display:grid; gap:3px; }
+    .status-row {
+      display:flex; align-items:center; justify-content:space-between; gap:8px;
+      min-height:25px; padding:2px 5px; border-bottom:1px solid #263849; font-size:.79rem;
     }
-    input[type=range] {
-      width:100%; height:68px; accent-color:#4bb7ff; touch-action:none;
+    .status-row:last-child { border-bottom:0; }
+    .status-value { font-weight:850; text-align:right; }
+    .good { color:var(--green); } .bad { color:var(--red); } .warn { color:var(--yellow); }
+    .dot { display:inline-block; width:8px; height:8px; margin-right:5px; border-radius:50%; background:currentColor; }
+    .command-mini {
+      display:grid; grid-template-columns:1fr 1fr; gap:5px; padding:7px;
+      border-radius:10px; background:#0b151f; font-size:.7rem; color:var(--muted);
     }
-    .hint { margin:0 0 6px; color:#93a4b7; font-size:.8rem; }
-    .motors { display:grid; grid-template-columns:repeat(4,1fr); gap:7px; margin-top:8px; }
-    .motor {
-      padding:8px 5px; background:#101923; border:1px solid transparent;
-      border-radius:10px; font-size:.76rem;
-    }
-    .motor.selected { border-color:#4bb7ff; background:#173650; }
-    .motor strong { display:block; margin-top:3px; color:#50dda0; font-size:.9rem; }
-    .actions {
-      display:grid; grid-template-columns:1fr 1fr 1.25fr; gap:8px;
-      margin-top:auto;
-    }
-    #arm { background:#207c52; } #disarm { background:#415064; }
-    #stop { background:#bd3038; font-size:1.05rem; }
+    .command-mini strong { color:var(--text); float:right; }
+    .actions { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:auto; }
+    .arm { background:#19794f; }
+    .disarm { background:#3c4d60; }
+    .stop { grid-column:1/-1; background:#b92834; }
     #message {
-      min-height:30px; margin:0; padding:6px 10px; border-radius:9px;
-      text-align:center; color:#ffcf9f; background:#121b26; font-size:.84rem;
+      min-height:31px; margin:0; padding:7px 10px; border-radius:9px;
+      background:#0d1722; color:#ffd09e; text-align:center; font-size:.76rem;
     }
+
+    /* Landscape dual-stick controller. */
+    .stick-panel { padding:7px 9px 9px; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+    .stick-title { margin:0 0 3px; font-size:.85rem; }
+    .stick-layout {
+      width:100%; flex:1; min-height:210px; display:grid;
+      grid-template-columns:58px minmax(155px,1fr) 58px;
+      grid-template-rows:34px minmax(155px,1fr) 34px; align-items:center; justify-items:center;
+    }
+    .axis-label { color:#aec0d1; font-size:clamp(.62rem,1.25vw,.76rem); font-weight:750; text-align:center; line-height:1.12; }
+    .axis-up { grid-column:2; grid-row:1; }
+    .axis-left { grid-column:1; grid-row:2; }
+    .axis-right { grid-column:3; grid-row:2; }
+    .axis-down { grid-column:2; grid-row:3; }
+    .joystick {
+      grid-column:2; grid-row:2; position:relative; width:min(31vw,36vh,285px);
+      height:min(31vw,36vh,285px); min-width:155px; min-height:155px; border-radius:50%;
+      border:2px solid #38536c; background:
+        linear-gradient(90deg,transparent calc(50% - 1px),#33495c 50%,transparent calc(50% + 1px)),
+        linear-gradient(transparent calc(50% - 1px),#33495c 50%,transparent calc(50% + 1px)),
+        radial-gradient(circle,#172b3c 0 12%,#101b27 13% 68%,#0b141e 69%);
+      box-shadow:inset 0 0 28px #0008,0 8px 24px #0004; touch-action:none;
+    }
+    .joystick::after {
+      content:""; position:absolute; inset:12%; border:1px dashed #3b5266; border-radius:50%; pointer-events:none;
+    }
+    .joystick.locked { opacity:.45; }
+    .knob {
+      position:absolute; left:50%; top:50%; width:clamp(52px,8.4vw,76px); height:clamp(52px,8.4vw,76px);
+      border:2px solid #7ed1ff; border-radius:50%; background:radial-gradient(circle at 36% 30%,#68c9ff,#176e9f 65%,#0c4265);
+      box-shadow:0 7px 18px #0008,0 0 0 5px #45b8ff24; transform:translate(-50%,-50%); pointer-events:none;
+    }
+    .stick-readout { margin-top:1px; color:var(--muted); font-size:.7rem; }
+    .stick-readout strong { color:var(--blue); }
+
+    /* Existing no-prop motor test remains available as the other mode. */
+    #test-panel { padding:12px 14px; text-align:center; display:flex; flex-direction:column; }
+    #test-panel output { display:block; margin:6px 0; font-size:clamp(2.3rem,9vw,4.4rem); line-height:1; font-weight:950; }
+    input[type=range] { width:100%; height:66px; accent-color:var(--blue); touch-action:none; }
+    .hint { margin:0 0 7px; color:var(--muted); font-size:.76rem; }
+    .mode-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin:6px 0; }
+    .mode-grid label {
+      display:flex; align-items:center; justify-content:center; gap:6px; min-height:39px;
+      padding:6px; border:1px solid #3b4d60; border-radius:9px; background:#0e1823; font-size:.78rem; font-weight:750;
+    }
+    .mode-grid label.selected { border-color:var(--blue); background:#15364d; }
+    .mode-grid input { accent-color:var(--blue); }
+    .motor-picker select { width:100%; min-height:39px; padding:6px 9px; color:var(--text); border:1px solid #3b4d60; border-radius:9px; background:#0e1823; }
+    .motors { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:auto; }
+    .motor { padding:7px 4px; background:#0e1823; border:1px solid transparent; border-radius:9px; font-size:.7rem; }
+    .motor.selected { border-color:var(--blue); background:#15364d; }
+    .motor strong { display:block; margin-top:2px; color:var(--green); font-size:.78rem; }
+    .test-options { margin-top:5px; padding-top:5px; border-top:1px solid var(--line); }
+    .test-options > p { margin:0; font-size:.75rem; font-weight:800; }
     .launch {
-      position:fixed; inset:0; z-index:20; display:grid; place-items:center;
-      padding:24px; background:#0d131bf2; text-align:center;
+      position:fixed; inset:0; z-index:20; display:grid; place-items:center; padding:24px;
+      background:#091018f5; text-align:center;
     }
-    .launch-card { max-width:520px; }
-    .launch h2 { margin:0 0 8px; }
-    .launch p { color:#a9b8c8; }
-    #enter { width:100%; background:#207c52; }
-    @media (max-width:780px) {
-      .dashboard { grid-template-columns:1fr; }
+    .launch-card { max-width:530px; }
+    .launch h2 { margin:0 0 7px; }
+    .launch p { color:#a9bbcb; }
+    #enter { width:100%; background:#19794f; }
+    .rotate-note { display:none; }
+
+    @media (orientation:portrait) and (max-width:780px) {
+      #content.pilot { grid-template-columns:1fr 1fr; }
+      #content.pilot #status-panel { grid-column:1/-1; grid-row:1; }
+      #content.pilot .stick-panel { grid-row:2; }
+      #content.test { grid-template-columns:1fr; }
+      .joystick { width:min(39vw,230px); height:min(39vw,230px); }
+      .stick-layout { grid-template-columns:46px 1fr 46px; min-height:180px; }
+      .rotate-note { display:block; margin:0; color:var(--yellow); font-size:.72rem; text-align:center; }
+    }
+    @media (max-width:620px) {
+      .sub { display:none; }
+      #mode-toggle { min-width:115px; font-size:.72rem; }
+      #content.pilot { grid-template-columns:1fr; }
+      #content.pilot .stick-panel { grid-row:auto; }
+      #content.pilot #status-panel { grid-column:auto; grid-row:auto; }
       .motors { grid-template-columns:1fr 1fr; }
-      .actions {
-        grid-template-columns:1fr 1fr; position:sticky;
-        bottom:max(4px,env(safe-area-inset-bottom)); z-index:5;
-        padding:6px; margin-inline:-6px; border-radius:12px;
-        background:#0d131be8; backdrop-filter:blur(8px);
-      }
-      #stop { grid-column:1/-1; }
     }
-    @media (max-width:390px) {
-      .panel { padding:10px; }
-      .row { font-size:.82rem; }
-      .mode-grid { grid-template-columns:1fr; }
-      input[type=range] { height:58px; }
-    }
-    @media (max-height:520px) and (min-width:781px) {
-      main { gap:6px; padding-top:6px; padding-bottom:6px; }
-      .panel { padding:8px 11px; }
-      .row { padding:1px 0; font-size:.8rem; }
+    @media (orientation:landscape) and (max-height:560px) {
+      main { gap:5px; padding-top:5px; padding-bottom:5px; }
+      .sub,.stick-readout { display:none; }
+      #status-panel { padding:7px 8px; gap:4px; }
+      .status-row { min-height:21px; font-size:.7rem; }
+      .command-mini { padding:5px; }
+      button { min-height:36px; font-size:.72rem; }
+      .stick-panel { padding:4px 6px; }
+      .stick-layout { min-height:170px; grid-template-rows:27px minmax(145px,1fr) 27px; }
+      .joystick { width:min(29vw,38vh,220px); height:min(29vw,38vh,220px); min-width:145px; min-height:145px; }
+      #message { min-height:25px; padding:4px 8px; }
+      #test-panel { padding:8px 11px; }
       input[type=range] { height:48px; }
-      button { min-height:42px; }
-      .hint { display:none; }
     }
   </style>
 </head>
 <body>
 <div id="launch" class="launch">
   <div class="launch-card">
-    <h2>Drone Motor Test</h2>
-    <p>Tháo toàn bộ cánh quạt. Giao diện dùng được ở cả màn hình dọc và ngang.</p>
-    <button id="enter">VÀO CHẾ ĐỘ ĐIỀU KHIỂN</button>
+    <h2>Drone Controller</h2>
+    <p>Tháo cánh quạt khi thử nghiệm. Chế độ joystick được tối ưu cho màn hình ngang.</p>
+    <button id="enter">VÀO ĐIỀU KHIỂN</button>
   </div>
 </div>
 
 <main>
   <header class="topbar">
-    <div>
-      <h1>Drone Motor Test</h1>
-      <p class="sub">PWM thô 1000–1500 µs · bước 5 µs · không PID</p>
+    <div class="brand">
+      <h1>Drone Controller</h1>
+      <p class="sub">Rate control · Quad-X · WebSocket failsafe</p>
     </div>
-    <button id="fullscreen" aria-label="Toàn màn hình">⛶</button>
+    <div class="top-actions">
+      <button id="mode-toggle">MỞ JOYSTICK</button>
+      <button id="fullscreen" aria-label="Toàn màn hình">⛶</button>
+    </div>
   </header>
 
-  <div class="dashboard">
-    <section class="panel telemetry">
-      <div class="row"><span>Kết nối ESP32</span><span id="ws" class="value bad">DISCONNECTED</span></div>
-      <div class="row"><span>STM32 link</span><span id="stm" class="value bad">OFFLINE</span></div>
-      <div class="row"><span>STM32 state</span><span id="state" class="value">UNKNOWN</span></div>
-      <div class="row"><span>Phone TX session / seq</span><span id="phone-tx" class="value">- / -</span></div>
-      <div class="row"><span>Phone TX throttle</span><span id="phone-throttle" class="value">0 / 500</span></div>
-      <div class="row"><span>STM session / seq</span><span id="sequence" class="value">- / -</span></div>
-      <div class="row"><span>UART packet rate</span><span id="rate" class="value">0 pkt/s</span></div>
-      <div class="row"><span>Failsafe</span><span id="failsafe" class="value">UNKNOWN</span></div>
+  <p class="rotate-note">Xoay ngang màn hình để có vùng điều khiển lớn hơn.</p>
 
-      <hr style="border:0;border-top:1px solid #314052;margin:9px 0">
-      <p class="mode-title">Chế độ kiểm tra</p>
-      <div class="mode-grid">
-        <label id="mode-all-label" class="selected">
-          <input id="mode-all" name="motor-mode" type="radio" value="all" checked>
-          Cả 4 motor
-        </label>
-        <label id="mode-single-label">
-          <input id="mode-single" name="motor-mode" type="radio" value="single">
-          Từng motor
-        </label>
+  <div id="content" class="test">
+    <section id="left-stick-panel" class="panel stick-panel" hidden>
+      <h2 class="stick-title">Cần trái</h2>
+      <div class="stick-layout">
+        <span class="axis-label axis-up">↑<br>Throttle</span>
+        <span class="axis-label axis-left">← Yaw</span>
+        <div id="left-stick" class="joystick locked" role="slider" aria-label="Throttle và yaw" aria-disabled="true">
+          <div id="left-knob" class="knob"></div>
+        </div>
+        <span class="axis-label axis-right">Yaw →</span>
+        <span class="axis-label axis-down">↓<br>Throttle</span>
       </div>
-      <div id="motor-picker" class="motor-picker" hidden>
-        <select id="motor-select" aria-label="Chọn motor">
-          <option value="1">M1 · Front-left · PA6</option>
-          <option value="2">M2 · Rear-left · PA7</option>
-          <option value="3">M3 · Front-right · PB0</option>
-          <option value="4">M4 · Rear-right · PB1</option>
-        </select>
+      <div class="stick-readout">Throttle <strong data-command="throttle">0</strong> · Yaw <strong data-command="yaw">0</strong></div>
+    </section>
+
+    <section id="status-panel" class="panel">
+      <div id="mode-badge" class="mode-badge">TEST MOTOR</div>
+      <div class="status-list">
+        <div class="status-row"><span>Kết nối ESP32</span><span data-status="ws" class="status-value bad"><i class="dot"></i>DISCONNECTED</span></div>
+        <div class="status-row"><span>STM32 link</span><span data-status="stm" class="status-value bad"><i class="dot"></i>OFFLINE</span></div>
+        <div class="status-row"><span>Trạng thái drone</span><span data-status="state" class="status-value">UNKNOWN</span></div>
+        <div class="status-row"><span>Failsafe</span><span data-status="failsafe" class="status-value">UNKNOWN</span></div>
+        <div class="status-row"><span>UART</span><span data-status="rate" class="status-value">0 pkt/s</span></div>
+      </div>
+      <div class="command-mini">
+        <span>Yêu cầu <strong data-command="requested">0 / 500</strong></span>
+        <span>Đã áp dụng <strong data-status="applied">0 / 500</strong></span>
+        <span>Roll <strong data-command="roll">0</strong></span>
+        <span>Pitch <strong data-command="pitch">0</strong></span>
+      </div>
+
+      <div id="test-options" class="test-options">
+        <p>Chế độ kiểm tra</p>
+        <div class="mode-grid">
+          <label id="mode-all-label" class="selected"><input id="mode-all" name="motor-mode" type="radio" value="all" checked>Cả 4 motor</label>
+          <label id="mode-single-label"><input id="mode-single" name="motor-mode" type="radio" value="single">Từng motor</label>
+        </div>
+        <div id="motor-picker" class="motor-picker" hidden>
+          <select id="motor-select" aria-label="Chọn motor">
+            <option value="1">M1 · Front-left · PA6</option>
+            <option value="2">M2 · Rear-left · PA7</option>
+            <option value="3">M3 · Front-right · PB0</option>
+            <option value="4">M4 · Rear-right · PB1</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="arm" data-action="arm">GIỮ 1 GIÂY ĐỂ ARM</button>
+        <button class="disarm" data-action="disarm">DISARM</button>
+        <button class="stop" data-action="stop">DỪNG KHẨN CẤP</button>
       </div>
     </section>
 
-    <section class="panel throttle-panel">
+    <section id="right-stick-panel" class="panel stick-panel" hidden>
+      <h2 class="stick-title">Cần phải</h2>
+      <div class="stick-layout">
+        <span class="axis-label axis-up">↑<br>Pitch forward</span>
+        <span class="axis-label axis-left">← Roll</span>
+        <div id="right-stick" class="joystick locked" role="slider" aria-label="Pitch và roll" aria-disabled="true">
+          <div id="right-knob" class="knob"></div>
+        </div>
+        <span class="axis-label axis-right">Roll →</span>
+        <span class="axis-label axis-down">↓<br>Pitch backward</span>
+      </div>
+      <div class="stick-readout">Roll <strong data-command="roll">0</strong> · Pitch <strong data-command="pitch">0</strong></div>
+    </section>
+
+    <section id="test-panel" class="panel">
       <span id="throttle-label">Throttle chung 4 motor</span>
       <output id="requested">0 / 500</output>
       <input id="slider" type="range" min="0" max="500" step="5" value="0" disabled>
       <p class="hint">Dead-man: phải giữ tay trên slider; thả tay sẽ về 0 ngay.</p>
-      <div class="row"><span>STM32 đã áp dụng</span><span id="applied" class="value">0 / 500</span></div>
       <div class="motors">
         <div class="motor selected" data-motor="1">M1 · FL<strong class="motor-pwm">1000 µs</strong></div>
         <div class="motor selected" data-motor="2">M2 · RL<strong class="motor-pwm">1000 µs</strong></div>
@@ -179,38 +281,42 @@
     </section>
   </div>
 
-  <section class="actions">
-    <button id="arm">GIỮ 1 GIÂY ĐỂ ARM</button>
-    <button id="disarm">DISARM / RESET</button>
-    <button id="stop">DỪNG KHẨN CẤP</button>
-  </section>
   <p id="message">Đang kết nối ESP32…</p>
 </main>
 
 <script>
   const MAGIC = 0xA55A, VERSION = 1, CONTROL = 1, STATUS = 2;
-  const ARM = 1, ESTOP = 2, FAILSAFE_ACTIVE = 1 << 9;
+  const ARM = 1, ESTOP = 2, ACRO_MODE = 1 << 3, FAILSAFE_ACTIVE = 1 << 9;
   const ESP_ACK_TIMEOUT_MS = 700, STM_TIMEOUT_MS = 300;
+  const THROTTLE_MAX = 500, AXIS_MAX = 1000;
   const stateNames = ['BOOT', 'DISARMED', 'ARMED', 'FAILSAFE', 'ERROR'];
   const $ = id => document.getElementById(id);
 
   let socket = null, session = 0, sequence = 0;
   let armRequested = false, emergency = true, deadman = false, requested = 0;
-  let motorMode = 'all', selectedMotor = 1;
+  let rollCommand = 0, pitchCommand = 0, yawCommand = 0;
+  let controlMode = 'test', motorMode = 'all', selectedMotor = 1;
   let lastEspAckAt = 0, lastStatusAt = 0, lastStatus = null;
   let armTimer = null, reconnectTimer = null, controllerBusy = false;
 
-  async function enterControlMode() {
-    $('launch').hidden = true;
+  const fieldNodes = name => document.querySelectorAll(`[data-status="${name}"]`);
+  function setStatus(name, text, tone = '') {
+    fieldNodes(name).forEach(node => {
+      node.innerHTML = (name === 'ws' || name === 'stm') ? `<i class="dot"></i>${text}` : text;
+      node.className = `status-value ${tone}`;
+    });
+  }
+  function setCommand(name, value) {
+    document.querySelectorAll(`[data-command="${name}"]`).forEach(node => node.textContent = value);
   }
 
+  async function enterControlMode() { $('launch').hidden = true; }
   async function enterFullscreen() {
     try {
       if (!document.fullscreenElement && document.documentElement.requestFullscreen)
-        await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+        await document.documentElement.requestFullscreen({ navigationUI:'hide' });
     } catch (_) {}
   }
-
   $('enter').addEventListener('click', enterControlMode);
   $('fullscreen').addEventListener('click', enterFullscreen);
 
@@ -224,14 +330,16 @@
     return crc;
   }
 
-  function motorSelectionValue() {
-    return motorMode === 'all' ? 0 : selectedMotor;
-  }
-
   function createControl() {
     const data = new Uint8Array(30), view = new DataView(data.buffer);
-    const flags = emergency ? ESTOP : (armRequested ? ARM : 0);
-    const throttle = (!emergency && armRequested && deadman) ? requested : 0;
+    const flags = emergency ? ESTOP : ((armRequested ? ARM : 0) | (controlMode === 'pilot' ? ACRO_MODE : 0));
+    const throttleEnabled = controlMode === 'pilot' || deadman;
+    const throttle = (!emergency && armRequested && throttleEnabled) ? requested : 0;
+    const roll = controlMode === 'pilot' && armRequested ? rollCommand : 0;
+    const pitch = controlMode === 'pilot' && armRequested ? pitchCommand : 0;
+    const yaw = controlMode === 'pilot' && armRequested ? yawCommand : 0;
+    const motorSelection = controlMode === 'test' ? (motorMode === 'all' ? 0 : selectedMotor) : 0;
+
     view.setUint16(0, MAGIC, true);
     view.setUint8(2, VERSION); view.setUint8(3, CONTROL);
     view.setUint16(4, sequence++ & 0xffff, true);
@@ -240,7 +348,10 @@
     view.setUint8(10, 12); view.setUint8(11, 0);
     view.setUint32(12, Math.floor(performance.now()) >>> 0, true);
     view.setUint16(16, throttle, true);
-    view.setUint16(24, motorSelectionValue(), true);
+    view.setInt16(18, roll, true);
+    view.setInt16(20, pitch, true);
+    view.setInt16(22, yaw, true);
+    view.setUint16(24, motorSelection, true);
     view.setUint16(26, 0, true);
     view.setUint16(28, crc16(data, 28), true);
     return data;
@@ -248,303 +359,330 @@
 
   function sendNow() {
     if (socket?.readyState !== WebSocket.OPEN) return;
-    const packet = createControl();
-    socket.send(packet);
-    const view = new DataView(packet.buffer);
-    $('phone-tx').textContent =
-      `${view.getUint16(6, true)} / ${view.getUint16(4, true)}`;
-    $('phone-throttle').textContent = `${view.getUint16(16, true)} / 500`;
+    socket.send(createControl());
   }
 
-  function resetThrottleUi() {
+  function updateCommandUi() {
+    setCommand('throttle', String(requested));
+    setCommand('requested', `${requested} / ${THROTTLE_MAX}`);
+    setCommand('roll', String(rollCommand));
+    setCommand('pitch', String(pitchCommand));
+    setCommand('yaw', String(yawCommand));
+    $('requested').value = `${requested} / ${THROTTLE_MAX}`;
+  }
+
+  function setKnob(knob, x, y) {
+    knob.style.transform = `translate(calc(-50% + ${x}px),calc(-50% + ${y}px))`;
+  }
+
+  function drawStickPositions() {
+    const leftRadius = Math.max(0, $('left-stick').clientWidth / 2 - $('left-knob').offsetWidth / 2 - 5);
+    const rightRadius = Math.max(0, $('right-stick').clientWidth / 2 - $('right-knob').offsetWidth / 2 - 5);
+    const leftY = leftRadius * (1 - 2 * requested / THROTTLE_MAX);
+    setKnob($('left-knob'), leftRadius * yawCommand / AXIS_MAX, leftY);
+    setKnob($('right-knob'), rightRadius * rollCommand / AXIS_MAX, -rightRadius * pitchCommand / AXIS_MAX);
+  }
+
+  function resetInputs() {
     deadman = false; requested = 0;
+    rollCommand = 0; pitchCommand = 0; yawCommand = 0;
     $('slider').value = 0;
-    $('requested').value = '0 / 500';
+    updateCommandUi();
+    requestAnimationFrame(drawStickPositions);
   }
 
-  function setModeLocked(locked) {
+  function setMotorModeLocked(locked) {
     $('mode-all').disabled = locked;
     $('mode-single').disabled = locked;
     $('motor-select').disabled = locked;
   }
 
-  function updateModeUi() {
+  function updateControlAvailability() {
+    $('slider').disabled = !armRequested || controlMode !== 'test';
+    ['left-stick','right-stick'].forEach(id => {
+      $(id).classList.toggle('locked', !armRequested || controlMode !== 'pilot');
+      $(id).setAttribute('aria-disabled', String(!armRequested || controlMode !== 'pilot'));
+    });
+  }
+
+  function updateMotorModeUi() {
     $('mode-all-label').classList.toggle('selected', motorMode === 'all');
     $('mode-single-label').classList.toggle('selected', motorMode === 'single');
     $('motor-picker').hidden = motorMode !== 'single';
-    $('throttle-label').textContent = motorMode === 'all'
-      ? 'Throttle chung 4 motor'
-      : `Throttle riêng M${selectedMotor}`;
+    $('throttle-label').textContent = motorMode === 'all' ? 'Throttle chung 4 motor' : `Throttle riêng M${selectedMotor}`;
     document.querySelectorAll('.motor').forEach(card => {
       const motor = Number(card.dataset.motor);
       card.classList.toggle('selected', motorMode === 'all' || motor === selectedMotor);
     });
   }
 
+  function renderControlMode() {
+    const pilot = controlMode === 'pilot';
+    $('content').className = pilot ? 'pilot' : 'test';
+    $('left-stick-panel').hidden = !pilot;
+    $('right-stick-panel').hidden = !pilot;
+    $('test-panel').hidden = pilot;
+    $('test-options').hidden = pilot;
+    $('mode-badge').textContent = pilot ? 'JOYSTICK · RATE' : 'TEST MOTOR';
+    $('mode-toggle').textContent = pilot ? 'MỞ TEST MOTOR' : 'MỞ JOYSTICK';
+    updateControlAvailability();
+    requestAnimationFrame(drawStickPositions);
+  }
+
   function forceLocalSafe(message, useEmergency) {
     armRequested = false;
     emergency = useEmergency;
-    resetThrottleUi();
-    $('slider').disabled = true;
-    setModeLocked(false);
-    document.querySelectorAll('.motor-pwm').forEach(item => {
-      item.textContent = '1000 µs';
-    });
+    resetInputs();
+    updateControlAvailability();
+    setMotorModeLocked(false);
+    document.querySelectorAll('.motor-pwm').forEach(item => item.textContent = '1000 µs');
     if (message) $('message').textContent = message;
   }
+
+  $('mode-toggle').addEventListener('click', () => {
+    const nextMode = controlMode === 'test' ? 'pilot' : 'test';
+    const keepEmergency = emergency;
+    forceLocalSafe('Đang đổi chế độ; đã DISARM và đưa mọi lệnh về 0.', keepEmergency);
+    sendNow();
+    controlMode = nextMode;
+    renderControlMode();
+    sendNow();
+    $('message').textContent = nextMode === 'pilot'
+      ? 'Đã mở joystick. Throttle bắt đầu ở 0; giữ ARM 1 giây trước khi điều khiển.'
+      : 'Đã về chế độ test motor và DISARM toàn bộ motor.';
+  });
 
   function newSession() {
     const random = new Uint16Array(1);
     crypto.getRandomValues(random);
-    session = random[0] || 1;
-    sequence = 0;
-    lastStatus = null;
-    lastStatusAt = 0;
-    emergency = false;
+    session = random[0] || 1; sequence = 0;
+    lastStatus = null; lastStatusAt = 0; emergency = false;
     forceLocalSafe('', false);
   }
 
   function scheduleReconnect() {
     if (controllerBusy || reconnectTimer !== null) return;
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = null;
-      connect();
-    }, 1000);
+    reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, 1000);
   }
 
   function connect() {
-    if (socket && (socket.readyState === WebSocket.CONNECTING ||
-                   socket.readyState === WebSocket.OPEN)) return;
-
+    if (socket && (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)) return;
     const currentSocket = new WebSocket(`ws://${location.host}/ws`);
-    socket = currentSocket;
-    currentSocket.binaryType = 'arraybuffer';
-    $('ws').textContent = 'CONNECTING';
-    $('ws').className = 'value warn';
+    socket = currentSocket; currentSocket.binaryType = 'arraybuffer';
+    setStatus('ws','CONNECTING','warn');
 
     currentSocket.onopen = () => {
       if (socket !== currentSocket) return;
-      lastEspAckAt = performance.now();
-      newSession();
-      $('ws').textContent = 'WAIT ACK';
-      $('ws').className = 'value warn';
+      lastEspAckAt = performance.now(); newSession();
+      setStatus('ws','WAIT ACK','warn');
       $('message').textContent = 'Đã mở WebSocket, đang chờ ESP32 phản hồi…';
       sendNow();
     };
-
     currentSocket.onmessage = event => {
       if (socket !== currentSocket) return;
       if (typeof event.data === 'string') {
         if (event.data === 'ESP_ALIVE') {
-          lastEspAckAt = performance.now();
-          $('ws').textContent = 'CONNECTED';
-          $('ws').className = 'value good';
-          return;
+          lastEspAckAt = performance.now(); setStatus('ws','CONNECTED','good'); return;
         }
         if (event.data === 'CONTROLLER_BUSY') {
           controllerBusy = true;
           forceLocalSafe('ESP32 đang được điều khiển bởi thiết bị hoặc tab khác.', true);
-          $('ws').textContent = 'BUSY';
-          $('ws').className = 'value warn';
-          currentSocket.close(4001, 'Controller busy');
+          setStatus('ws','BUSY','warn'); currentSocket.close(4001,'Controller busy');
         }
         return;
       }
       decodeStatus(new Uint8Array(event.data));
     };
-
     currentSocket.onclose = () => {
       if (socket !== currentSocket) return;
       forceLocalSafe('Mất kết nối ESP32; watchdog sẽ dừng motor.', true);
       socket = null;
-      if (!controllerBusy) {
-        $('ws').textContent = 'DISCONNECTED';
-        $('ws').className = 'value bad';
-        scheduleReconnect();
-      }
+      if (!controllerBusy) { setStatus('ws','DISCONNECTED','bad'); scheduleReconnect(); }
     };
     currentSocket.onerror = () => currentSocket.close();
   }
 
-  function renderMotorPwm(pulseValues) {
-    document.querySelectorAll('.motor-pwm').forEach((item, index) => {
-      item.textContent = `${pulseValues[index]} µs`;
-    });
-  }
-
   function decodeStatus(data) {
     if (data.length !== 38) return;
-    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-    if (view.getUint16(0, true) !== MAGIC || view.getUint8(2) !== VERSION ||
+    const view = new DataView(data.buffer,data.byteOffset,data.byteLength);
+    if (view.getUint16(0,true) !== MAGIC || view.getUint8(2) !== VERSION ||
         view.getUint8(3) !== STATUS || view.getUint8(10) !== 20 ||
-        view.getUint16(36, true) !== crc16(data, 36)) return;
+        view.getUint16(36,true) !== crc16(data,36)) return;
 
-    const state = view.getUint8(30), errors = view.getUint16(31, true);
-    const applied = view.getUint16(20, true);
-    const pulseValues = [
-      view.getUint16(22, true),
-      view.getUint16(24, true),
-      view.getUint16(26, true),
-      view.getUint16(28, true),
-    ];
-    lastStatusAt = performance.now();
-    lastStatus = { state, errors };
-    $('state').textContent = stateNames[state] || 'INVALID';
-    $('state').className = `value ${state === 2 ? 'good' : state >= 3 ? 'bad' : ''}`;
-    $('sequence').textContent = `${view.getUint16(6, true)} / ${view.getUint16(16, true)}`;
-    $('applied').textContent = `${applied} / 500`;
-    renderMotorPwm(pulseValues);
-    $('rate').textContent = `${view.getUint16(33, true)} pkt/s`;
+    const state = view.getUint8(30), errors = view.getUint16(31,true);
+    const applied = view.getUint16(20,true);
+    const pulseValues = [22,24,26,28].map(offset => view.getUint16(offset,true));
+    lastStatusAt = performance.now(); lastStatus = { state,errors };
+    setStatus('state',stateNames[state] || 'INVALID',state === 2 ? 'good' : state >= 3 ? 'bad' : '');
+    setStatus('applied',`${applied} / ${THROTTLE_MAX}`);
+    setStatus('rate',`${view.getUint16(33,true)} pkt/s`);
+    document.querySelectorAll('.motor-pwm').forEach((item,index) => item.textContent = `${pulseValues[index]} µs`);
     const failed = state === 3 || (errors & FAILSAFE_ACTIVE);
-    $('failsafe').textContent = failed ? 'ACTIVE' : 'CLEAR';
-    $('failsafe').className = `value ${failed ? 'bad' : 'good'}`;
+    setStatus('failsafe',failed ? 'ACTIVE' : 'CLEAR',failed ? 'bad' : 'good');
     if ((state === 3 || state === 4) && armRequested) {
-      forceLocalSafe('STM32 vào FAILSAFE/ERROR; đã khóa throttle và gửi e-stop.', true);
+      forceLocalSafe('STM32 vào FAILSAFE/ERROR; đã khóa điều khiển và gửi e-stop.', true);
       sendNow();
     }
   }
 
   document.querySelectorAll('input[name="motor-mode"]').forEach(input => {
     input.addEventListener('change', () => {
-      /* Keep ARM, but remove thrust before routing it to another output. */
-      resetThrottleUi();
-      sendNow();
-      motorMode = input.value;
-      updateModeUi();
-      sendNow();
-      if (armRequested) {
-        $('message').textContent = motorMode === 'all'
-          ? 'Vẫn ARM; đã chuyển sang cả 4 motor với throttle bằng 0.'
-          : `Vẫn ARM; đã chuyển sang M${selectedMotor} với throttle bằng 0.`;
-      }
+      resetInputs(); sendNow(); motorMode = input.value; updateMotorModeUi(); sendNow();
+      if (armRequested) $('message').textContent = 'Đã đưa throttle về 0 trước khi đổi đầu ra motor.';
     });
   });
-
   $('motor-select').addEventListener('change', () => {
-    /* Send zero on the old selection before changing the selected output. */
-    resetThrottleUi();
-    sendNow();
-    selectedMotor = Number($('motor-select').value);
-    updateModeUi();
-    sendNow();
-    if (armRequested) {
-      $('message').textContent =
-        `Vẫn ARM; đã chọn M${selectedMotor} với throttle bằng 0.`;
-    }
+    resetInputs(); sendNow(); selectedMotor = Number($('motor-select').value);
+    updateMotorModeUi(); sendNow();
   });
 
   $('slider').addEventListener('pointerdown', event => {
-    if (!$('slider').disabled) {
-      deadman = true;
-      $('slider').setPointerCapture(event.pointerId);
-    }
+    if (!$('slider').disabled) { deadman = true; $('slider').setPointerCapture(event.pointerId); }
   });
   $('slider').addEventListener('input', () => {
-    requested = Number($('slider').value);
-    $('requested').value = `${requested} / 500`;
+    requested = Number($('slider').value); updateCommandUi();
   });
-
   function releaseDeadman() {
     if (!deadman && requested === 0) return;
-    resetThrottleUi();
-    sendNow();
+    resetInputs(); sendNow();
   }
-  $('slider').addEventListener('pointerup', releaseDeadman);
-  $('slider').addEventListener('pointercancel', releaseDeadman);
-  $('slider').addEventListener('lostpointercapture', releaseDeadman);
+  ['pointerup','pointercancel','lostpointercapture'].forEach(name => $('slider').addEventListener(name,releaseDeadman));
 
-  function espConnected() {
-    return socket?.readyState === WebSocket.OPEN &&
-      performance.now() - lastEspAckAt < ESP_ACK_TIMEOUT_MS;
+  function stickGeometry(zone) {
+    const rect = zone.getBoundingClientRect();
+    const knob = zone.querySelector('.knob');
+    return { rect, radius:Math.max(1,Math.min(rect.width,rect.height) / 2 - knob.offsetWidth / 2 - 5) };
   }
-
-  function stmConnected() {
-    return lastStatus !== null &&
-      performance.now() - lastStatusAt < STM_TIMEOUT_MS;
+  function clampUnitVector(x,y) {
+    const length = Math.hypot(x,y);
+    return length > 1 ? { x:x/length,y:y/length } : { x,y };
   }
-
-  function canArm() {
-    return espConnected() && stmConnected() && lastStatus.state === 1 &&
-      requested === 0 && !emergency;
+  function applyAxisDeadzone(value,deadzone = .06) {
+    const magnitude = Math.abs(value);
+    if (magnitude <= deadzone) return 0;
+    return Math.sign(value) * (magnitude-deadzone) / (1-deadzone);
   }
-
-  $('arm').addEventListener('pointerdown', () => {
-    if (!canArm()) {
-      $('message').textContent =
-        'Không thể ARM: cần ESP CONNECTED, STM32 DISARMED và throttle bằng 0.';
+  function pointerVector(event,zone) {
+    const { rect,radius } = stickGeometry(zone);
+    return clampUnitVector((event.clientX - rect.left - rect.width/2) / radius,
+                           (event.clientY - rect.top - rect.height/2) / radius);
+  }
+  function updateLeftStick(event) {
+    const vector = pointerVector(event,$('left-stick'));
+    yawCommand = Math.round(applyAxisDeadzone(vector.x) * AXIS_MAX);
+    requested = Math.round((1 - vector.y) * THROTTLE_MAX / 2);
+    requested = Math.max(0,Math.min(THROTTLE_MAX,requested));
+    updateCommandUi(); drawStickPositions();
+  }
+  function updateRightStick(event) {
+    const vector = pointerVector(event,$('right-stick'));
+    rollCommand = Math.round(applyAxisDeadzone(vector.x) * AXIS_MAX);
+    pitchCommand = Math.round(applyAxisDeadzone(-vector.y) * AXIS_MAX);
+    updateCommandUi(); drawStickPositions();
+  }
+  function startStick(event,side) {
+    if (!armRequested || controlMode !== 'pilot') {
+      $('message').textContent = 'Joystick đang khóa. Cần kết nối và giữ ARM 1 giây.';
       return;
     }
-    $('message').textContent = 'Tiếp tục giữ để ARM…';
-    armTimer = setTimeout(() => {
-      armRequested = true;
-      setModeLocked(false);
-      sendNow();
-      $('slider').disabled = false;
-      $('message').textContent = motorMode === 'all'
-        ? 'Đã ARM chung cả 4 motor; giữ slider để tăng PWM.'
-        : `Đã ARM hệ thống; chỉ M${selectedMotor} nhận throttle.`;
-      armTimer = null;
-    }, 1000);
-  });
-
-  function cancelArmHold() {
-    if (armTimer) {
-      clearTimeout(armTimer); armTimer = null;
-      $('message').textContent = 'Đã hủy ARM.';
+    const zone = side === 'left' ? $('left-stick') : $('right-stick');
+    if (side === 'left') {
+      const { rect,radius } = stickGeometry(zone);
+      const currentX = rect.left + rect.width/2 + radius * yawCommand/AXIS_MAX;
+      const currentY = rect.top + rect.height/2 + radius * (1 - 2*requested/THROTTLE_MAX);
+      const allowedDistance = $('left-knob').offsetWidth * .9;
+      if (Math.hypot(event.clientX-currentX,event.clientY-currentY) > allowedDistance) {
+        $('message').textContent = 'Chạm vào núm cần trái rồi kéo để tránh throttle nhảy đột ngột.';
+        return;
+      }
     }
+    zone.setPointerCapture(event.pointerId);
+    zone.dataset.pointer = String(event.pointerId);
+    side === 'left' ? updateLeftStick(event) : updateRightStick(event);
   }
-  $('arm').addEventListener('pointerup', cancelArmHold);
-  $('arm').addEventListener('pointerleave', cancelArmHold);
-  $('arm').addEventListener('pointercancel', cancelArmHold);
-
-  $('disarm').onclick = () => {
-    forceLocalSafe('Đã DISARM toàn bộ motor.', false);
-    sendNow();
-  };
-
-  $('stop').onclick = () => {
-    forceLocalSafe('EMERGENCY STOP đã gửi.', true);
-    sendNow();
-  };
-
-  window.addEventListener('pagehide', () => {
-    emergency = true; armRequested = false; resetThrottleUi(); sendNow();
+  function moveStick(event,side) {
+    const zone = side === 'left' ? $('left-stick') : $('right-stick');
+    if (zone.dataset.pointer !== String(event.pointerId)) return;
+    side === 'left' ? updateLeftStick(event) : updateRightStick(event);
+  }
+  function releaseStick(event,side) {
+    const zone = side === 'left' ? $('left-stick') : $('right-stick');
+    if (zone.dataset.pointer !== String(event.pointerId)) return;
+    delete zone.dataset.pointer;
+    if (side === 'left') yawCommand = 0;
+    else { rollCommand = 0; pitchCommand = 0; }
+    updateCommandUi(); drawStickPositions(); sendNow();
+  }
+  [['left-stick','left'],['right-stick','right']].forEach(([id,side]) => {
+    const zone = $(id);
+    zone.addEventListener('pointerdown',event => startStick(event,side));
+    zone.addEventListener('pointermove',event => moveStick(event,side));
+    ['pointerup','pointercancel','lostpointercapture'].forEach(name =>
+      zone.addEventListener(name,event => releaseStick(event,side)));
   });
-  document.addEventListener('visibilitychange', () => {
+  window.addEventListener('resize',() => requestAnimationFrame(drawStickPositions));
+
+  function espConnected() {
+    return socket?.readyState === WebSocket.OPEN && performance.now()-lastEspAckAt < ESP_ACK_TIMEOUT_MS;
+  }
+  function stmConnected() {
+    return lastStatus !== null && performance.now()-lastStatusAt < STM_TIMEOUT_MS;
+  }
+  function canArm() {
+    return espConnected() && stmConnected() && lastStatus.state === 1 &&
+      requested === 0 && rollCommand === 0 && pitchCommand === 0 && yawCommand === 0 && !emergency;
+  }
+
+  document.querySelectorAll('[data-action="arm"]').forEach(button => {
+    button.addEventListener('pointerdown', () => {
+      if (!canArm()) {
+        $('message').textContent = 'Không thể ARM: cần ESP CONNECTED, STM32 DISARMED và mọi lệnh bằng 0.';
+        return;
+      }
+      $('message').textContent = 'Tiếp tục giữ để ARM…';
+      armTimer = setTimeout(() => {
+        armRequested = true; setMotorModeLocked(false); updateControlAvailability(); sendNow();
+        $('message').textContent = controlMode === 'pilot'
+          ? 'Đã ARM. Kéo cần trái từ vị trí thấp nhất; thả tay giữ throttle, yaw tự về giữa.'
+          : 'Đã ARM; giữ slider để tăng PWM.';
+        armTimer = null;
+      },1000);
+    });
+    ['pointerup','pointerleave','pointercancel'].forEach(name => button.addEventListener(name,() => {
+      if (armTimer) { clearTimeout(armTimer); armTimer = null; $('message').textContent = 'Đã hủy ARM.'; }
+    }));
+  });
+  document.querySelectorAll('[data-action="disarm"]').forEach(button => button.addEventListener('click',() => {
+    forceLocalSafe('Đã DISARM toàn bộ motor.',false); sendNow();
+  }));
+  document.querySelectorAll('[data-action="stop"]').forEach(button => button.addEventListener('click',() => {
+    forceLocalSafe('EMERGENCY STOP đã gửi.',true); sendNow();
+  }));
+
+  window.addEventListener('pagehide',() => {
+    emergency = true; armRequested = false; resetInputs(); sendNow();
+  });
+  document.addEventListener('visibilitychange',() => {
     if (document.hidden && armRequested) {
-      emergency = true; armRequested = false; resetThrottleUi(); sendNow();
+      emergency = true; armRequested = false; resetInputs(); updateControlAvailability(); sendNow();
     }
   });
 
-  setInterval(sendNow, 25);
+  setInterval(sendNow,25);
   setInterval(() => {
-    const now = performance.now();
-    const espOnline = espConnected();
-    const stmOnline = stmConnected();
-
-    $('stm').textContent = stmOnline ? 'ONLINE' : 'OFFLINE';
-    $('stm').className = `value ${stmOnline ? 'good' : 'bad'}`;
-
+    const now = performance.now(), espOnline = espConnected(), stmOnline = stmConnected();
+    setStatus('stm',stmOnline ? 'ONLINE' : 'OFFLINE',stmOnline ? 'good' : 'bad');
     if (!stmOnline && armRequested) {
-      forceLocalSafe('Mất status STM32 khi đang ARM; đã khóa throttle và gửi e-stop.', true);
-      sendNow();
+      forceLocalSafe('Mất status STM32 khi đang ARM; đã khóa điều khiển và gửi e-stop.',true); sendNow();
     }
-
-    if (socket?.readyState === WebSocket.OPEN &&
-        now - lastEspAckAt >= ESP_ACK_TIMEOUT_MS) {
+    if (socket?.readyState === WebSocket.OPEN && now-lastEspAckAt >= ESP_ACK_TIMEOUT_MS) {
       const staleSocket = socket;
-      forceLocalSafe('ESP32 không phản hồi; đóng kết nối và chờ watchdog dừng motor.', true);
-      $('ws').textContent = 'NO RESPONSE';
-      $('ws').className = 'value bad';
-      staleSocket.close(4000, 'ESP heartbeat timeout');
-    } else if (espOnline) {
-      $('ws').textContent = 'CONNECTED';
-      $('ws').className = 'value good';
-    }
-  }, 100);
+      forceLocalSafe('ESP32 không phản hồi; đóng kết nối và chờ watchdog dừng motor.',true);
+      setStatus('ws','NO RESPONSE','bad'); staleSocket.close(4000,'ESP heartbeat timeout');
+    } else if (espOnline) setStatus('ws','CONNECTED','good');
+  },100);
 
-  updateModeUi();
-  connect();
+  updateCommandUi(); updateMotorModeUi(); renderControlMode(); connect();
 </script>
 </body>
 </html>

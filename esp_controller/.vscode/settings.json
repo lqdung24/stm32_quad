@@ -13,7 +13,7 @@
   "clangd.arguments": [
     "--background-index",
     "--query-driver=**",
-    "--compile-commands-dir=/home/lqdung/Downloads/11.drone/stm32cube/esp_controller/build"
+    "--compile-commands-dir=${workspaceFolder}/build"
 ],
 "idf.flashType": "UART"
 }

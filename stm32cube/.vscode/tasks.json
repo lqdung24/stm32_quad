@@ -1,0 +1,22 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "ESP-IDF Build",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-lc",
+        ". /home/lqdung/.espressif/v6.0/esp-idf/export.sh && idf.py -C \"${workspaceFolder}/esp_controller\" build"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

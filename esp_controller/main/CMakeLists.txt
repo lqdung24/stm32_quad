@@ -6,11 +6,11 @@ idf_component_register(
         "uart_transport.c"
         "websocket_server.c"
         "wifi_ap.c"
-        "../../Components/DroneProtocol/Src/dp_protocol.c"
-        "../../Components/DroneProtocol/Src/dp_bytes.c"
-        "../../Components/DroneProtocol/Src/dp_cobs.c"
+        "../../stm32cube/Components/DroneProtocol/Src/dp_protocol.c"
+        "../../stm32cube/Components/DroneProtocol/Src/dp_bytes.c"
+        "../../stm32cube/Components/DroneProtocol/Src/dp_cobs.c"
     INCLUDE_DIRS "."
-        "../../Components/DroneProtocol/Inc"
+        "../../stm32cube/Components/DroneProtocol/Inc"
     REQUIRES
         esp_driver_uart
         esp_event
