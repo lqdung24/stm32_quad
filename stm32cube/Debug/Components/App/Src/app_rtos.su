@@ -1,0 +1,6 @@
+../Components/App/Src/app_rtos.c:48:6:AppRtos_Bootstrap	16	static
+../Components/App/Src/app_rtos.c:115:13:flight_task	24	static
+../Components/App/Src/app_rtos.c:130:13:telemetry_task	24	static
+../Components/App/Src/app_rtos.c:144:17:milliseconds_to_ticks	56	static
+../Components/App/Src/app_rtos.c:158:13:delay_until_next_period	16	static
+../Components/App/Src/app_rtos.c:176:13:terminate_thread	16	static

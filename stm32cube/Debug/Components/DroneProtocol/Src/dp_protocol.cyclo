@@ -1,0 +1,9 @@
+../Components/DroneProtocol/Src/dp_protocol.c:6:13:encode_header	1
+../Components/DroneProtocol/Src/dp_protocol.c:19:28:decode_header	10
+../Components/DroneProtocol/Src/dp_protocol.c:77:13:append_crc	1
+../Components/DroneProtocol/Src/dp_protocol.c:85:10:DroneProtocol_Crc16CcittFalse	6
+../Components/DroneProtocol/Src/dp_protocol.c:109:21:DroneProtocol_EncodeControl	13
+../Components/DroneProtocol/Src/dp_protocol.c:148:21:DroneProtocol_DecodeControl	13
+../Components/DroneProtocol/Src/dp_protocol.c:190:21:DroneProtocol_EncodeStatus	6
+../Components/DroneProtocol/Src/dp_protocol.c:228:21:DroneProtocol_DecodeStatus	8
+../Components/DroneProtocol/Src/dp_protocol.c:271:6:DroneProtocol_IsSequenceNewer	3

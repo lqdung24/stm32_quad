@@ -1,0 +1,6 @@
+../Components/DroneProtocol/Src/dp_bytes.c:3:10:DroneProtocol_ReadU16Le	16	static
+../Components/DroneProtocol/Src/dp_bytes.c:8:9:DroneProtocol_ReadI16Le	16	static
+../Components/DroneProtocol/Src/dp_bytes.c:13:10:DroneProtocol_ReadU32Le	16	static
+../Components/DroneProtocol/Src/dp_bytes.c:21:6:DroneProtocol_WriteU16Le	16	static
+../Components/DroneProtocol/Src/dp_bytes.c:27:6:DroneProtocol_WriteI16Le	16	static
+../Components/DroneProtocol/Src/dp_bytes.c:32:6:DroneProtocol_WriteU32Le	16	static

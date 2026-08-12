@@ -1,0 +1,51 @@
+{
+  "idf.currentSetup": "/home/lqdung/.espressif/v6.0/esp-idf",
+  "idf.buildPath": "${workspaceFolder}/esp_controller/build",
+  "C_Cpp.default.configurationProvider": "ms-vscode.cpptools",
+  "C_Cpp.default.compilerPath": "/usr/bin/arm-none-eabi-gcc",
+  "C_Cpp.default.intelliSenseMode": "linux-gcc-arm",
+  "C_Cpp.default.cStandard": "gnu11",
+  "C_Cpp.default.defines": [
+    "DEBUG",
+    "USE_PWR_LDO_SUPPLY",
+    "USE_HAL_DRIVER",
+    "STM32H743xx"
+  ],
+  "clangd.path": "/home/lqdung/.espressif/tools/esp-clang/esp-20.1.1_20250829/esp-clang/bin/clangd",
+  "clangd.arguments": [
+    "--background-index",
+    "--query-driver=/usr/bin/arm-none-eabi-gcc"
+  ],
+  "clangd.fallbackFlags": [
+    "-std=gnu11",
+    "-DDEBUG",
+    "-DUSE_PWR_LDO_SUPPLY",
+    "-DUSE_HAL_DRIVER",
+    "-DSTM32H743xx",
+    "-I${workspaceFolder}/Core/Inc",
+    "-I${workspaceFolder}/Components/Attitude/Inc",
+    "-I${workspaceFolder}/Components/Mahony/Inc",
+    "-I${workspaceFolder}/Components/Mahony9/Inc",
+    "-I${workspaceFolder}/Components/MotorPWM/Inc",
+    "-I${workspaceFolder}/Components/DroneProtocol/Inc",
+    "-I${workspaceFolder}/Components/DroneControl/Inc",
+    "-I${workspaceFolder}/Components/App/Inc",
+    "-I${workspaceFolder}/Components/ICM20948/Inc",
+    "-I${workspaceFolder}/Drivers/STM32H7xx_HAL_Driver/Inc",
+    "-I${workspaceFolder}/Drivers/STM32H7xx_HAL_Driver/Inc/Legacy",
+    "-I${workspaceFolder}/Drivers/CMSIS/Device/ST/STM32H7xx/Include",
+    "-I${workspaceFolder}/Drivers/CMSIS/Include",
+    "-I${workspaceFolder}/Drivers/CMSIS/RTOS2/Include",
+    "-I${workspaceFolder}/USB_DEVICE/App",
+    "-I${workspaceFolder}/USB_DEVICE/Target",
+    "-I${workspaceFolder}/Middlewares/ST/STM32_USB_Device_Library/Core/Inc",
+    "-I${workspaceFolder}/Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc",
+    "-I${workspaceFolder}/Middlewares/Third_Party/FreeRTOS/Source/include",
+    "-I${workspaceFolder}/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2",
+    "-I${workspaceFolder}/Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F"
+  ],
+  "idf.flashType": "JTAG",
+  "idf.openOcdConfigs": [
+    "board/esp32s3-builtin.cfg"
+  ]
+}

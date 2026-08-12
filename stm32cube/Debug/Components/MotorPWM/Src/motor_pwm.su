@@ -1,0 +1,11 @@
+../Components/MotorPWM/Src/motor_pwm.c:11:6:MotorPwm_Attach	32	static
+../Components/MotorPWM/Src/motor_pwm.c:37:6:MotorPwm_Arm	16	static
+../Components/MotorPWM/Src/motor_pwm.c:49:6:MotorPwm_Disarm	16	static
+../Components/MotorPWM/Src/motor_pwm.c:60:6:MotorPwm_SetPulseUs	16	static
+../Components/MotorPWM/Src/motor_pwm.c:79:6:MotorPwm_SetAllPulseUs	24	static
+../Components/MotorPWM/Src/motor_pwm.c:110:10:MotorPwm_GetPulseUs	16	static
+../Components/MotorPWM/Src/motor_pwm.c:123:6:MotorPwm_IsAttached	16	static
+../Components/MotorPWM/Src/motor_pwm.c:128:6:MotorPwm_IsArmed	16	static
+../Components/MotorPWM/Src/motor_pwm.c:133:13:MotorPwm_ConfigValid	24	static
+../Components/MotorPWM/Src/motor_pwm.c:160:13:MotorPwm_WriteCompare	16	static
+../Components/MotorPWM/Src/motor_pwm.c:169:13:MotorPwm_WriteDisarmed	24	static

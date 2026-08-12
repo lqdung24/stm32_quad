@@ -1,0 +1,2 @@
+../Components/MotorMixer/Src/motor_mixer.c:6:6:MotorMixer_MixQuadX	19
+../Components/MotorMixer/Src/motor_mixer.c:109:6:MotorMixer_MapToPulseUs	14

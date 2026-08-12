@@ -1,0 +1,40 @@
+{
+  "configurations": [
+    {
+      "name": "STM32H743",
+      "compilerPath": "/usr/bin/arm-none-eabi-gcc",
+      "intelliSenseMode": "linux-gcc-arm",
+      "cStandard": "gnu11",
+      "defines": [
+        "DEBUG",
+        "USE_PWR_LDO_SUPPLY",
+        "USE_HAL_DRIVER",
+        "STM32H743xx"
+      ],
+      "includePath": [
+        "${workspaceFolder}/Core/Inc",
+        "${workspaceFolder}/Components/Attitude/Inc",
+        "${workspaceFolder}/Components/Mahony/Inc",
+        "${workspaceFolder}/Components/Mahony9/Inc",
+        "${workspaceFolder}/Components/MotorPWM/Inc",
+        "${workspaceFolder}/Components/DroneProtocol/Inc",
+        "${workspaceFolder}/Components/DroneControl/Inc",
+        "${workspaceFolder}/Components/App/Inc",
+        "${workspaceFolder}/Components/ICM20948/Inc",
+        "${workspaceFolder}/Drivers/STM32H7xx_HAL_Driver/Inc",
+        "${workspaceFolder}/Drivers/STM32H7xx_HAL_Driver/Inc/Legacy",
+        "${workspaceFolder}/Drivers/CMSIS/Device/ST/STM32H7xx/Include",
+        "${workspaceFolder}/Drivers/CMSIS/Include",
+        "${workspaceFolder}/Drivers/CMSIS/RTOS2/Include",
+        "${workspaceFolder}/USB_DEVICE/App",
+        "${workspaceFolder}/USB_DEVICE/Target",
+        "${workspaceFolder}/Middlewares/ST/STM32_USB_Device_Library/Core/Inc",
+        "${workspaceFolder}/Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc",
+        "${workspaceFolder}/Middlewares/Third_Party/FreeRTOS/Source/include",
+        "${workspaceFolder}/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2",
+        "${workspaceFolder}/Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F"
+      ]
+    }
+  ],
+  "version": 4
+}
