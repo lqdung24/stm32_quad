@@ -15,7 +15,8 @@ extern "C" {
 
 #define DRONE_CONTROL_LINK_TIMEOUT_MS       300U
 #define DRONE_CONTROL_STATUS_PERIOD_MS      50U
-/* Pilot collective limit: 500 maps nominally to 1500 us before corrections. */
+#define DRONE_CONTROL_FLIGHT_TELEMETRY_PERIOD_MS 20U
+/* Pilot input 1..500 maps to 1225..1800 us before PID/mixer corrections. */
 #define DRONE_CONTROL_MAX_TEST_THROTTLE     500U
 
 typedef struct
@@ -44,6 +45,20 @@ bool DroneControl_UpdateBodyRates(float roll_rad_s,
                                   float dt_s);
 bool DroneControl_GetRateControlDebug(RateControlDebug *debug);
 bool DroneControl_GetMixerTelemetry(DroneMixerTelemetry *telemetry);
+
+/*
+ * Publish a fresh IMU/control-loop sample for the best-effort telemetry
+ * stream. Attitude is in degrees; gyro is BODY FRD rad/s. This function never
+ * changes flight state or actuator output.
+ */
+void DroneControl_PublishFlightTelemetrySample(uint32_t timestamp_ms,
+                                               bool attitude_valid,
+                                               float roll_deg,
+                                               float pitch_deg,
+                                               float yaw_deg,
+                                               float gyro_roll_rad_s,
+                                               float gyro_pitch_rad_s,
+                                               float gyro_yaw_rad_s);
 
 /* Call from the corresponding STM32 HAL callbacks. */
 void DroneControl_OnUartRxEvent(UART_HandleTypeDef *uart, uint16_t size);

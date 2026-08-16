@@ -46,16 +46,16 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
  ../Middlewares/Third_Party/FreeRTOS/Source/include/mpu_wrappers.h \
  ../Middlewares/Third_Party/FreeRTOS/Source/include/newlib-freertos.h \
  ../Drivers/CMSIS/RTOS2/Include/cmsis_os2.h \
- /home/lqdung/Downloads/11.drone/stm32cube/USB_DEVICE/App/usb_device.h \
- /home/lqdung/Downloads/11.drone/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_def.h \
+ /home/lqdung/Downloads/11.drone/code/stm32cube/USB_DEVICE/App/usb_device.h \
+ /home/lqdung/Downloads/11.drone/code/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_def.h \
  ../USB_DEVICE/Target/usbd_conf.h ../Components/App/Inc/app.h \
- /home/lqdung/Downloads/11.drone/stm32cube/USB_DEVICE/App/usbd_cdc_if.h \
- /home/lqdung/Downloads/11.drone/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc/usbd_cdc.h \
- /home/lqdung/Downloads/11.drone/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_ioreq.h \
- /home/lqdung/Downloads/11.drone/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_def.h \
- /home/lqdung/Downloads/11.drone/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_core.h \
- /home/lqdung/Downloads/11.drone/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_ioreq.h \
- /home/lqdung/Downloads/11.drone/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_ctlreq.h
+ /home/lqdung/Downloads/11.drone/code/stm32cube/USB_DEVICE/App/usbd_cdc_if.h \
+ /home/lqdung/Downloads/11.drone/code/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc/usbd_cdc.h \
+ /home/lqdung/Downloads/11.drone/code/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_ioreq.h \
+ /home/lqdung/Downloads/11.drone/code/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_def.h \
+ /home/lqdung/Downloads/11.drone/code/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_core.h \
+ /home/lqdung/Downloads/11.drone/code/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_ioreq.h \
+ /home/lqdung/Downloads/11.drone/code/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_ctlreq.h
 ../Core/Inc/main.h:
 ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal.h:
 ../Core/Inc/stm32h7xx_hal_conf.h:
@@ -104,14 +104,14 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
 ../Middlewares/Third_Party/FreeRTOS/Source/include/mpu_wrappers.h:
 ../Middlewares/Third_Party/FreeRTOS/Source/include/newlib-freertos.h:
 ../Drivers/CMSIS/RTOS2/Include/cmsis_os2.h:
-/home/lqdung/Downloads/11.drone/stm32cube/USB_DEVICE/App/usb_device.h:
-/home/lqdung/Downloads/11.drone/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_def.h:
+/home/lqdung/Downloads/11.drone/code/stm32cube/USB_DEVICE/App/usb_device.h:
+/home/lqdung/Downloads/11.drone/code/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_def.h:
 ../USB_DEVICE/Target/usbd_conf.h:
 ../Components/App/Inc/app.h:
-/home/lqdung/Downloads/11.drone/stm32cube/USB_DEVICE/App/usbd_cdc_if.h:
-/home/lqdung/Downloads/11.drone/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc/usbd_cdc.h:
-/home/lqdung/Downloads/11.drone/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_ioreq.h:
-/home/lqdung/Downloads/11.drone/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_def.h:
-/home/lqdung/Downloads/11.drone/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_core.h:
-/home/lqdung/Downloads/11.drone/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_ioreq.h:
-/home/lqdung/Downloads/11.drone/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_ctlreq.h:
+/home/lqdung/Downloads/11.drone/code/stm32cube/USB_DEVICE/App/usbd_cdc_if.h:
+/home/lqdung/Downloads/11.drone/code/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc/usbd_cdc.h:
+/home/lqdung/Downloads/11.drone/code/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_ioreq.h:
+/home/lqdung/Downloads/11.drone/code/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_def.h:
+/home/lqdung/Downloads/11.drone/code/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_core.h:
+/home/lqdung/Downloads/11.drone/code/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_ioreq.h:
+/home/lqdung/Downloads/11.drone/code/stm32cube/Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_ctlreq.h:

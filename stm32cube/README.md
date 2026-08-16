@@ -24,11 +24,15 @@ Tất cả ESP32-S3, STM32 và ESC phải có **GND chung**.
 
 ## 2. ESP32-S3 nối STM32H743
 
-| ESP32-S3 | STM32H743 | Chức năng |
-|---|---|---|
+ESP32-S3: VCC | GND | RX | TX
+
+STM32: RX | TX | GND | VCC
+
+| ESP32-S3         | STM32H743       | Chức năng                        |
+| ---------------- | --------------- | ---------------------------------- |
 | GPIO17, UART1 TX | PA10, USART1 RX | Lệnh điều khiển ESP32 → STM32 |
-| GPIO18, UART1 RX | PA9, USART1 TX | Trạng thái STM32 → ESP32 |
-| GND | GND | Mass tín hiệu chung |
+| GPIO18, UART1 RX | PA9, USART1 TX  | Trạng thái STM32 → ESP32        |
+| GND              | GND             | Mass tín hiệu chung              |
 
 Cấu hình UART hai bên:
 
@@ -40,17 +44,36 @@ Cấu hình UART hai bên:
 Không nối UART vào điện áp `5 V`. Không dùng TX0/RX0 của ESP32-S3 nếu UART0
 vẫn đang được dùng cho console/debug 115200 baud.
 
+## Telemetry Wi-Fi 50 Hz
+
+STM32 gửi packet `FLIGHT_TELEMETRY` 50 byte (có CRC) tối đa mỗi `20 ms` qua
+UART. ESP chỉ giữ sample mới nhất rồi phát binary WebSocket ở
+`ws://192.168.4.1/telemetry`; kênh điều khiển `/ws` vẫn độc lập. AP cho phép
+hai thiết bị: điện thoại điều khiển và máy tính ghi/plot.
+
+Các trường gồm timestamp STM32, roll/pitch/yaw (độ), gyro BODY-FRD và
+rate-setpoint (rad/s), PID correction mixer, PWM M1..M4, `armed/state`, cờ
+actuator active và cờ attitude valid. Trên máy tính, chạy từ thư mục gốc:
+
+```sh
+python3 -m pip install websocket-client matplotlib
+python3 tools/telemetry_plot.py --csv flight.csv
+```
+
+Lệnh thêm `--no-plot` để chỉ ghi CSV. Telemetry là best-effort và có thể bỏ
+sample khi Wi-Fi chậm; nó không được phép làm chậm lệnh điều khiển.
+
 ## 3. STM32 nối bốn ESC
 
 Chiều quay được xác định khi nhìn từ trên xuống drone. Ngưỡng idle cấu hình
 có thêm `20 µs` so với mức motor bắt đầu quay đo được khi tháo cánh.
 
-| Motor | Vị trí | STM32H743 | Timer | Chiều quay | Bắt đầu quay | Idle cấu hình |
-|---:|---|---|---|---|---:|---:|
-| M1 | front-left | PA6 | TIM3_CH1 | Thuận (CW) | `1200 µs` | `1220 µs` |
-| M2 | rear-left | PA7 | TIM3_CH2 | Ngược (CCW) | `1205 µs` | `1225 µs` |
-| M3 | front-right | PB0 | TIM3_CH3 | Ngược (CCW) | `1190 µs` | `1210 µs` |
-| M4 | rear-right | PB1 | TIM3_CH4 | Thuận (CW) | `1205 µs` | `1225 µs` |
+| Motor | Vị trí    | STM32H743 | Timer    | Chiều quay   | Bắt đầu quay | Idle cấu hình |
+| ----: | ----------- | --------- | -------- | ------------- | --------------: | --------------: |
+|    M1 | front-left  | PA6       | TIM3_CH1 | Thuận (CW)   |    `1200 µs` |    `1220 µs` |
+|    M2 | rear-left   | PA7       | TIM3_CH2 | Ngược (CCW) |    `1205 µs` |    `1225 µs` |
+|    M3 | front-right | PB0       | TIM3_CH3 | Ngược (CCW) |    `1190 µs` |    `1210 µs` |
+|    M4 | rear-right  | PB1       | TIM3_CH4 | Thuận (CW)   |    `1205 µs` |    `1225 µs` |
 
 Với mỗi ESC:
 
@@ -66,12 +89,13 @@ PWM hiện được cấu hình:
 
 - Tần số: `50 Hz`
 - Disarm/throttle 0: `1000 µs`
-- Command motor `N` tương ứng pulse danh nghĩa `1000 + N µs`; ví dụ command
-  `200` là `1200 µs`, command `500` là `1500 µs`.
-- Khi armed và collective dương, pulse thấp hơn idle riêng trong bảng sẽ được
-  nâng lên idle đó (`1220/1225/1210/1225 µs`).
+- Throttle điện thoại `1..500` được map liên tục thành collective
+  `1225..1800 µs`: `1 → 1225`, `100 → ~1339`, `250 → ~1512`,
+  `400 → ~1685`, `500 → 1800 µs`.
+- Khi armed và có PID correction, pulse từng motor vẫn được bảo vệ bởi idle
+  riêng (`1220/1225/1210/1225 µs`).
 - PID rate và Quad-X mixer có thể tạo pulse khác nhau cho bốn motor, tối đa
-  `2000 µs`; giới hạn collective `500` không phải giới hạn cứng sau mixer.
+  `2000 µs`; collective tối đa `1800 µs` vẫn chừa headroom cho PID.
 
 Nếu motor quay sai chiều, ngắt nguồn rồi đổi chéo **bất kỳ hai trong ba dây
 pha** giữa ESC và motor.
@@ -87,14 +111,14 @@ pha** giữa ESC và motor.
 
 ## 4. ICM20948 nối STM32 qua SPI1
 
-| ICM20948 | STM32H743 | Chức năng |
-|---|---|---|
-| SCLK/SCL | PG11 | SPI1 SCK |
-| SDO/AD0 | PG9 | SPI1 MISO |
-| SDI/SDA | PB5 | SPI1 MOSI |
-| CS/NCS | PA4 | Chip select |
-| VCC | 3V3 | Nguồn logic |
-| GND | GND | Mass chung |
+| ICM20948 | STM32H743 | Chức năng  |
+| -------- | --------- | ------------ |
+| SCLK/SCL | PG11      | SPI1 SCK     |
+| SDO/AD0  | PG9       | SPI1 MISO    |
+| SDI/SDA  | PB5       | SPI1 MOSI    |
+| CS/NCS   | PA4       | Chip select  |
+| VCC      | 3V3       | Nguồn logic |
+| GND      | GND       | Mass chung   |
 
 Chỉ cấp `3.3 V` nếu module ICM20948 không có bộ ổn áp/chuyển mức riêng.
 

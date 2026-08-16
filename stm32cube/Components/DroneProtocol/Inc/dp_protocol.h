@@ -20,6 +20,8 @@ extern "C"
 #define DRONE_CONTROL_PACKET_SIZE 30U
 #define DRONE_STATUS_PAYLOAD_SIZE 20U
 #define DRONE_STATUS_PACKET_SIZE 38U
+#define DRONE_FLIGHT_TELEMETRY_PAYLOAD_SIZE 32U
+#define DRONE_FLIGHT_TELEMETRY_PACKET_SIZE 50U
 #define DRONE_PROTOCOL_MOTOR_COUNT 4U
 
 #define DRONE_CONTROL_FLAG_ARM_REQUEST (1U << 0)
@@ -28,6 +30,12 @@ extern "C"
 #define DRONE_CONTROL_FLAG_ACRO_MODE (1U << 3)
 #define DRONE_CONTROL_FLAG_FAILSAFE_TEST (1U << 4)
 #define DRONE_CONTROL_FLAG_ALLOWED_MASK 0x001FU
+
+/* Flight telemetry flags live in the packet header, not in its payload. */
+#define DRONE_FLIGHT_TELEMETRY_FLAG_STATE_MASK 0x0007U
+#define DRONE_FLIGHT_TELEMETRY_FLAG_ACTUATORS_ACTIVE (1U << 3)
+#define DRONE_FLIGHT_TELEMETRY_FLAG_ATTITUDE_VALID (1U << 4)
+#define DRONE_FLIGHT_TELEMETRY_FLAG_ALLOWED_MASK 0x001FU
 
 /* AUX1 motor selection used only by the no-prop threshold-test mode. */
 #define DRONE_CONTROL_MOTOR_SELECT_ALL 0U
@@ -55,7 +63,8 @@ extern "C"
         DRONE_PACKET_HEARTBEAT = 0x03,
         DRONE_PACKET_CONFIG_REQUEST = 0x04,
         DRONE_PACKET_CONFIG_RESPONSE = 0x05,
-        DRONE_PACKET_ERROR_REPORT = 0x06
+        DRONE_PACKET_ERROR_REPORT = 0x06,
+        DRONE_PACKET_FLIGHT_TELEMETRY = 0x07
     } DronePacketType;
 
     typedef enum
@@ -115,6 +124,25 @@ extern "C"
         uint16_t uart_rx_rate;
     } DroneSystemStatus;
 
+    /*
+     * Packed payload layout (all values are little-endian):
+     * attitude_cdeg[3], gyro_mrad_s[3], rate_setpoint_mrad_s[3],
+     * pid_command_centi[3], motor_pwm_us[4].
+     * The state and validity bits are carried in header.flags.
+     */
+    typedef struct
+    {
+        DronePacketHeader header;
+        int16_t attitude_cdeg[3];
+        int16_t gyro_mrad_s[3];
+        int16_t rate_setpoint_mrad_s[3];
+        int16_t pid_command_centi[3];
+        uint16_t motor_pwm_us[DRONE_PROTOCOL_MOTOR_COUNT];
+        uint8_t state;
+        bool actuators_active;
+        bool attitude_valid;
+    } DroneFlightTelemetry;
+
     uint16_t DroneProtocol_Crc16CcittFalse(const uint8_t *data, size_t length);
 
     DroneProtocolResult DroneProtocol_EncodeControl(
@@ -134,6 +162,15 @@ extern "C"
         const uint8_t *packet,
         size_t packet_length,
         DroneSystemStatus *status);
+
+    DroneProtocolResult DroneProtocol_EncodeFlightTelemetry(
+        const DroneFlightTelemetry *telemetry,
+        uint8_t output[DRONE_FLIGHT_TELEMETRY_PACKET_SIZE]);
+
+    DroneProtocolResult DroneProtocol_DecodeFlightTelemetry(
+        const uint8_t *packet,
+        size_t packet_length,
+        DroneFlightTelemetry *telemetry);
 
     bool DroneProtocol_IsSequenceNewer(uint16_t candidate, uint16_t reference);
 

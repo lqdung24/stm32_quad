@@ -910,6 +910,15 @@ static void App_UpdateAttitude(void)
     {
       (void)Mahony9_GetEulerDegrees(&mahony9, &attitude);
     }
+    DroneControl_PublishFlightTelemetrySample(
+        icm20948_last_sample_ms,
+        mahony9.initialized,
+        attitude.roll,
+        attitude.pitch,
+        attitude.yaw,
+        gyro_body_rad_s.x,
+        gyro_body_rad_s.y,
+        gyro_body_rad_s.z);
     App_RecordSampleTiming(sample_cycle,
                            imu_read_cycles,
                            DWT->CYCCNT - pipeline_start_cycle,
@@ -948,6 +957,14 @@ static void App_UpdateAttitude(void)
   {
     (void)Mahony9_GetEulerDegrees(&mahony9, &attitude);
   }
+  DroneControl_PublishFlightTelemetrySample(icm20948_last_sample_ms,
+                                             updated,
+                                             attitude.roll,
+                                             attitude.pitch,
+                                             attitude.yaw,
+                                             gyro_body_rad_s.x,
+                                             gyro_body_rad_s.y,
+                                             gyro_body_rad_s.z);
   App_RecordSampleTiming(sample_cycle,
                          imu_read_cycles,
                          DWT->CYCCNT - pipeline_start_cycle,

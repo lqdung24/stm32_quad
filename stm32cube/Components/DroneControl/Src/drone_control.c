@@ -6,6 +6,7 @@
 #include "motor_pwm.h"
 
 #include <stdbool.h>
+#include <math.h>
 #include <string.h>
 
 #define CONTROL_UART_RX_CHUNK_SIZE 64U
@@ -14,6 +15,8 @@
 #define CONTROL_UART_ENCODED_FRAME_SIZE 64U
 #define CONTROL_ESC_MIN_PULSE_US 1000U
 #define CONTROL_ESC_MAX_PULSE_US 2000U
+#define CONTROL_PILOT_IDLE_PULSE_US 1225U
+#define CONTROL_PILOT_MAX_PULSE_US 1800U
 /*
  * No-prop first-rotation measurements, expressed above the 1000 us disarmed
  * pulse. Rotation is viewed from above: M1/M4 CW and M2/M3 CCW. The active
@@ -55,7 +58,7 @@ typedef struct
     uint8_t log_ring[CONTROL_UART_LOG_RING_SIZE];
     uint8_t encoded_rx[CONTROL_UART_ENCODED_FRAME_SIZE];
     size_t encoded_rx_length;
-    uint8_t tx_frame[DRONE_STATUS_PACKET_SIZE + 3U];
+    uint8_t tx_frame[CONTROL_UART_ENCODED_FRAME_SIZE];
     DroneSystemState state;
     uint16_t error_flags;
     uint16_t active_session;
@@ -64,17 +67,21 @@ typedef struct
     uint16_t applied_throttle;
     uint8_t motor_test_selection;
     uint16_t status_sequence;
+    uint16_t flight_telemetry_sequence;
     uint16_t packets_this_second;
     uint16_t uart_rx_rate;
     uint32_t rate_window_ms;
     uint32_t last_valid_control_ms;
     uint32_t last_status_ms;
+    uint32_t last_flight_telemetry_ms;
+    DroneFlightTelemetry flight_telemetry;
     volatile uint32_t mixer_telemetry_sequence;
     DroneMixerTelemetry mixer_telemetry;
     bool initialized;
     bool has_session;
     bool has_sequence;
     bool has_valid_control;
+    bool flight_telemetry_available;
     bool require_disarm_cycle;
 } DroneControlContext;
 
@@ -89,6 +96,7 @@ static void process_control_command(const DroneControlCommand *command,
 static void enter_failsafe(uint16_t reason);
 static void disarm_output(void);
 static bool apply_throttle(uint16_t requested);
+static float throttle_to_pwm(uint16_t throttle);
 static bool apply_mixed_output(float roll_correction,
                                float pitch_correction,
                                float yaw_correction);
@@ -99,7 +107,10 @@ static void publish_mixer_telemetry(const MotorMixerResult *mix,
                                     float yaw_correction,
                                     bool active);
 static void publish_disarmed_telemetry(void);
-static void send_status(uint32_t now_ms);
+static bool send_status(uint32_t now_ms);
+static bool send_flight_telemetry(void);
+static bool try_send_packet(const uint8_t *raw, size_t raw_length);
+static bool scale_to_i16(float value, float scale, int16_t *output);
 
 static const MotorMixerOutputConfig mixer_output_config = {
     .disarmed_pulse_us = CONTROL_ESC_MIN_PULSE_US,
@@ -111,6 +122,17 @@ static const MotorMixerOutputConfig mixer_output_config = {
     },
     .maximum_pulse_us = CONTROL_ESC_MAX_PULSE_US,
 };
+
+_Static_assert(CONTROL_PILOT_IDLE_PULSE_US >= CONTROL_M1_IDLE_PULSE_US,
+               "pilot idle must cover M1 idle floor");
+_Static_assert(CONTROL_PILOT_IDLE_PULSE_US >= CONTROL_M2_IDLE_PULSE_US,
+               "pilot idle must cover M2 idle floor");
+_Static_assert(CONTROL_PILOT_IDLE_PULSE_US >= CONTROL_M3_IDLE_PULSE_US,
+               "pilot idle must cover M3 idle floor");
+_Static_assert(CONTROL_PILOT_IDLE_PULSE_US >= CONTROL_M4_IDLE_PULSE_US,
+               "pilot idle must cover M4 idle floor");
+_Static_assert(CONTROL_PILOT_MAX_PULSE_US <= CONTROL_ESC_MAX_PULSE_US,
+               "pilot maximum must leave valid actuator headroom");
 
 /*
  * Initial bench gains. Output is a normalized mixer correction, not us.
@@ -278,6 +300,68 @@ bool DroneControl_GetMixerTelemetry(DroneMixerTelemetry *telemetry)
     return true;
 }
 
+void DroneControl_PublishFlightTelemetrySample(uint32_t timestamp_ms,
+                                               bool attitude_valid,
+                                               float roll_deg,
+                                               float pitch_deg,
+                                               float yaw_deg,
+                                               float gyro_roll_rad_s,
+                                               float gyro_pitch_rad_s,
+                                               float gyro_yaw_rad_s)
+{
+    const float attitude_deg[3] = {roll_deg, pitch_deg, yaw_deg};
+    const float gyro_rad_s[3] = {
+        gyro_roll_rad_s,
+        gyro_pitch_rad_s,
+        gyro_yaw_rad_s,
+    };
+    DroneFlightTelemetry telemetry = {
+        .header = {
+            .sequence = 0U,
+            .session_id = control.active_session,
+            .sender_time_ms = timestamp_ms,
+        },
+        .state = (uint8_t)control.state,
+        .actuators_active = control.mixer_telemetry.active,
+        .attitude_valid = attitude_valid,
+    };
+    uint8_t axis;
+    uint8_t motor;
+
+    if (!control.initialized || (telemetry.state > DRONE_STATE_ERROR))
+    {
+        return;
+    }
+    for (axis = 0U; axis < RATE_CONTROL_AXIS_COUNT; ++axis)
+    {
+        if (!scale_to_i16(attitude_deg[axis], 100.0f,
+                          &telemetry.attitude_cdeg[axis]) ||
+            !scale_to_i16(gyro_rad_s[axis], 1000.0f,
+                          &telemetry.gyro_mrad_s[axis]) ||
+            !scale_to_i16(control.rate_control.debug.target_rad_s[axis],
+                          1000.0f,
+                          &telemetry.rate_setpoint_mrad_s[axis]) ||
+            !scale_to_i16(control.mixer_telemetry.pid_output[axis],
+                          100.0f,
+                          &telemetry.pid_command_centi[axis]))
+        {
+            return;
+        }
+    }
+    for (motor = 0U; motor < MOTOR_PWM_MOTOR_COUNT; ++motor)
+    {
+        telemetry.motor_pwm_us[motor] = control.mixer_telemetry.pulse_us[motor];
+        if ((telemetry.motor_pwm_us[motor] < CONTROL_ESC_MIN_PULSE_US) ||
+            (telemetry.motor_pwm_us[motor] > CONTROL_ESC_MAX_PULSE_US))
+        {
+            return;
+        }
+    }
+
+    control.flight_telemetry = telemetry;
+    control.flight_telemetry_available = true;
+}
+
 void DroneControl_Process(uint32_t now_ms)
 {
     process_uart_bytes(now_ms);
@@ -300,8 +384,18 @@ void DroneControl_Process(uint32_t now_ms)
     if ((uint32_t)(now_ms - control.last_status_ms) >=
         DRONE_CONTROL_STATUS_PERIOD_MS)
     {
-        control.last_status_ms = now_ms;
-        send_status(now_ms);
+        if (send_status(now_ms))
+        {
+            control.last_status_ms = now_ms;
+        }
+    }
+
+    if (control.flight_telemetry_available &&
+        ((uint32_t)(now_ms - control.last_flight_telemetry_ms) >=
+         DRONE_CONTROL_FLIGHT_TELEMETRY_PERIOD_MS) &&
+        send_flight_telemetry())
+    {
+        control.last_flight_telemetry_ms = now_ms;
     }
 }
 
@@ -601,17 +695,37 @@ static bool apply_throttle(uint16_t requested)
         control.rate_control.debug.output[RATE_CONTROL_YAW]);
 }
 
+static float throttle_to_pwm(uint16_t throttle)
+{
+    float normalized;
+
+    if (throttle == 0U)
+    {
+        return (float)CONTROL_ESC_MIN_PULSE_US;
+    }
+
+    normalized = (float)(throttle - 1U) /
+                 (float)(DRONE_CONTROL_MAX_TEST_THROTTLE - 1U);
+    return (float)CONTROL_PILOT_IDLE_PULSE_US +
+           (normalized * (float)(CONTROL_PILOT_MAX_PULSE_US -
+                                 CONTROL_PILOT_IDLE_PULSE_US));
+}
+
 static bool apply_mixed_output(float roll_correction,
                                float pitch_correction,
                                float yaw_correction)
 {
     MotorMixerResult mix;
     uint16_t pulses[MOTOR_PWM_MOTOR_COUNT];
+    const float collective_pwm =
+        throttle_to_pwm(control.applied_throttle);
+    const float collective_command =
+        collective_pwm - (float)CONTROL_ESC_MIN_PULSE_US;
     const bool active =
         (control.state == DRONE_STATE_ARMED) &&
         (control.applied_throttle > 0U);
 
-    if (!MotorMixer_MixQuadX((float)control.applied_throttle,
+    if (!MotorMixer_MixQuadX(collective_command,
                              roll_correction,
                              pitch_correction,
                              yaw_correction,
@@ -709,11 +823,11 @@ static void publish_disarmed_telemetry(void)
     publish_mixer_telemetry(&mix, pulses, 0.0f, 0.0f, 0.0f, false);
 }
 
-static void send_status(uint32_t now_ms)
+static bool send_status(uint32_t now_ms)
 {
     DroneSystemStatus status = {
         .header = {
-            .sequence = control.status_sequence++,
+            .sequence = control.status_sequence,
             .session_id = control.active_session,
             .sender_time_ms = now_ms,
         },
@@ -726,7 +840,6 @@ static void send_status(uint32_t now_ms)
     };
     uint8_t motor;
     uint8_t raw[DRONE_STATUS_PACKET_SIZE];
-    size_t encoded_length;
 
     for (motor = 0U; motor < MOTOR_PWM_MOTOR_COUNT; ++motor)
     {
@@ -737,16 +850,72 @@ static void send_status(uint32_t now_ms)
     if ((control.uart == NULL) ||
         (DroneProtocol_EncodeStatus(&status, raw) != DRONE_PROTOCOL_OK))
     {
-        return;
+        return false;
     }
-    encoded_length = DroneCobs_Encode(raw, sizeof(raw),
+    if (!try_send_packet(raw, sizeof(raw)))
+    {
+        return false;
+    }
+    ++control.status_sequence;
+    return true;
+}
+
+static bool send_flight_telemetry(void)
+{
+    uint8_t raw[DRONE_FLIGHT_TELEMETRY_PACKET_SIZE];
+    DroneFlightTelemetry telemetry = control.flight_telemetry;
+
+    telemetry.header.sequence = control.flight_telemetry_sequence;
+    if (DroneProtocol_EncodeFlightTelemetry(&telemetry, raw) !=
+        DRONE_PROTOCOL_OK)
+    {
+        return false;
+    }
+    if (!try_send_packet(raw, sizeof(raw)))
+    {
+        return false;
+    }
+    ++control.flight_telemetry_sequence;
+    return true;
+}
+
+static bool try_send_packet(const uint8_t *raw, size_t raw_length)
+{
+    size_t encoded_length;
+
+    if ((raw == NULL) || (raw_length == 0U) ||
+        (raw_length > DRONE_PROTOCOL_MAX_PACKET_SIZE) ||
+        (control.uart == NULL) ||
+        (control.uart->gState != HAL_UART_STATE_READY))
+    {
+        return false;
+    }
+    encoded_length = DroneCobs_Encode(raw, raw_length,
                                       control.tx_frame,
                                       sizeof(control.tx_frame) - 1U);
     if (encoded_length == 0U)
     {
-        return;
+        return false;
     }
     control.tx_frame[encoded_length++] = 0U;
-    (void)HAL_UART_Transmit_IT(control.uart, control.tx_frame,
-                               (uint16_t)encoded_length);
+    return HAL_UART_Transmit_IT(control.uart, control.tx_frame,
+                                (uint16_t)encoded_length) == HAL_OK;
+}
+
+static bool scale_to_i16(float value, float scale, int16_t *output)
+{
+    float scaled;
+
+    if ((output == NULL) || !isfinite(value) || !isfinite(scale))
+    {
+        return false;
+    }
+    scaled = value * scale;
+    if (!isfinite(scaled) || (scaled < -32768.0f) || (scaled > 32767.0f))
+    {
+        return false;
+    }
+    *output = (int16_t)((scaled >= 0.0f) ? (scaled + 0.5f) :
+                                               (scaled - 0.5f));
+    return true;
 }

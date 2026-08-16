@@ -34,11 +34,11 @@ Mixer commands use a logical `0..1000` scale. Common collective shifting
 preserves roll/pitch/yaw authority at the actuator limits. Corrections are
 scaled together only if their span exceeds the complete actuator range.
 
-Disarm and armed-zero-throttle remain `1000 us`. Logical motor commands retain
-the nominal ESC pulse scale: command 200 means `1200 us`, command 500 means
-`1500 us`, and command 1000 means `2000 us`. While collective is positive,
-each output is floored at its calibrated idle value in the table. The pilot
-collective is capped at 500, but mixer corrections may drive an individual
-motor above `1500 us`, up to the `2000 us` actuator limit. Raw threshold-test
-mode is disabled, so body-rate PID corrections are applied through the Quad-X
-mixer.
+Disarm and armed-zero-throttle remain `1000 us`. The pilot throttle command is
+mapped before mixing: command 1 is `1225 us`, command 100 is about `1339 us`,
+command 250 is about `1512 us`, command 400 is about `1685 us`, and command
+500 is `1800 us`. This removes the former `1..225` flat region at the motor
+idle floor. PID corrections remain logical mixer commands and may drive an
+individual motor above the pilot collective, up to the `2000 us` actuator
+limit. Raw threshold-test mode is disabled, so body-rate PID corrections are
+applied through the Quad-X mixer.

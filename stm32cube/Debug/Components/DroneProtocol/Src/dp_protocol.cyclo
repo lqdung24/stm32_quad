@@ -6,4 +6,6 @@
 ../Components/DroneProtocol/Src/dp_protocol.c:148:21:DroneProtocol_DecodeControl	13
 ../Components/DroneProtocol/Src/dp_protocol.c:190:21:DroneProtocol_EncodeStatus	6
 ../Components/DroneProtocol/Src/dp_protocol.c:228:21:DroneProtocol_DecodeStatus	8
-../Components/DroneProtocol/Src/dp_protocol.c:271:6:DroneProtocol_IsSequenceNewer	3
+../Components/DroneProtocol/Src/dp_protocol.c:271:21:DroneProtocol_EncodeFlightTelemetry	12
+../Components/DroneProtocol/Src/dp_protocol.c:334:21:DroneProtocol_DecodeFlightTelemetry	9
+../Components/DroneProtocol/Src/dp_protocol.c:397:6:DroneProtocol_IsSequenceNewer	3

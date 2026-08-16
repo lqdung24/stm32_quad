@@ -268,6 +268,132 @@ DroneProtocolResult DroneProtocol_DecodeStatus(
     return DRONE_PROTOCOL_OK;
 }
 
+DroneProtocolResult DroneProtocol_EncodeFlightTelemetry(
+    const DroneFlightTelemetry *telemetry,
+    uint8_t output[DRONE_FLIGHT_TELEMETRY_PACKET_SIZE])
+{
+    DronePacketHeader header;
+    uint8_t axis;
+    uint8_t motor;
+
+    if ((telemetry == NULL) || (output == NULL))
+    {
+        return DRONE_PROTOCOL_NULL_ARGUMENT;
+    }
+    if ((telemetry->state > DRONE_STATE_ERROR) ||
+        (telemetry->header.flags &
+         ~DRONE_FLIGHT_TELEMETRY_FLAG_ALLOWED_MASK) != 0U)
+    {
+        return DRONE_PROTOCOL_RANGE_ERROR;
+    }
+    for (motor = 0U; motor < DRONE_PROTOCOL_MOTOR_COUNT; ++motor)
+    {
+        if ((telemetry->motor_pwm_us[motor] < 1000U) ||
+            (telemetry->motor_pwm_us[motor] > 2000U))
+        {
+            return DRONE_PROTOCOL_RANGE_ERROR;
+        }
+    }
+
+    memset(output, 0, DRONE_FLIGHT_TELEMETRY_PACKET_SIZE);
+    header = telemetry->header;
+    header.type = DRONE_PACKET_FLIGHT_TELEMETRY;
+    header.flags = (uint16_t)(telemetry->state &
+                              DRONE_FLIGHT_TELEMETRY_FLAG_STATE_MASK);
+    if (telemetry->actuators_active)
+    {
+        header.flags |= DRONE_FLIGHT_TELEMETRY_FLAG_ACTUATORS_ACTIVE;
+    }
+    if (telemetry->attitude_valid)
+    {
+        header.flags |= DRONE_FLIGHT_TELEMETRY_FLAG_ATTITUDE_VALID;
+    }
+    header.payload_length = DRONE_FLIGHT_TELEMETRY_PAYLOAD_SIZE;
+    encode_header(&header, output);
+
+    for (axis = 0U; axis < 3U; ++axis)
+    {
+        DroneProtocol_WriteI16Le(output + 16U + (2U * axis),
+                                 telemetry->attitude_cdeg[axis]);
+        DroneProtocol_WriteI16Le(output + 22U + (2U * axis),
+                                 telemetry->gyro_mrad_s[axis]);
+        DroneProtocol_WriteI16Le(output + 28U + (2U * axis),
+                                 telemetry->rate_setpoint_mrad_s[axis]);
+        DroneProtocol_WriteI16Le(output + 34U + (2U * axis),
+                                 telemetry->pid_command_centi[axis]);
+    }
+    for (motor = 0U; motor < DRONE_PROTOCOL_MOTOR_COUNT; ++motor)
+    {
+        DroneProtocol_WriteU16Le(output + 40U + (2U * motor),
+                                 telemetry->motor_pwm_us[motor]);
+    }
+    append_crc(output, DRONE_FLIGHT_TELEMETRY_PACKET_SIZE);
+    return DRONE_PROTOCOL_OK;
+}
+
+DroneProtocolResult DroneProtocol_DecodeFlightTelemetry(
+    const uint8_t *packet,
+    size_t packet_length,
+    DroneFlightTelemetry *telemetry)
+{
+    DroneProtocolResult result;
+    uint8_t axis;
+    uint8_t motor;
+
+    if (telemetry == NULL)
+    {
+        return DRONE_PROTOCOL_NULL_ARGUMENT;
+    }
+    result = decode_header(packet, packet_length,
+                           DRONE_PACKET_FLIGHT_TELEMETRY,
+                           DRONE_FLIGHT_TELEMETRY_PAYLOAD_SIZE,
+                           &telemetry->header);
+    if (result != DRONE_PROTOCOL_OK)
+    {
+        return result;
+    }
+    if ((telemetry->header.flags &
+         ~DRONE_FLIGHT_TELEMETRY_FLAG_ALLOWED_MASK) != 0U)
+    {
+        return DRONE_PROTOCOL_FLAGS_ERROR;
+    }
+
+    telemetry->state = (uint8_t)(telemetry->header.flags &
+                                 DRONE_FLIGHT_TELEMETRY_FLAG_STATE_MASK);
+    telemetry->actuators_active =
+        (telemetry->header.flags &
+         DRONE_FLIGHT_TELEMETRY_FLAG_ACTUATORS_ACTIVE) != 0U;
+    telemetry->attitude_valid =
+        (telemetry->header.flags &
+         DRONE_FLIGHT_TELEMETRY_FLAG_ATTITUDE_VALID) != 0U;
+    if (telemetry->state > DRONE_STATE_ERROR)
+    {
+        return DRONE_PROTOCOL_RANGE_ERROR;
+    }
+    for (axis = 0U; axis < 3U; ++axis)
+    {
+        telemetry->attitude_cdeg[axis] =
+            DroneProtocol_ReadI16Le(packet + 16U + (2U * axis));
+        telemetry->gyro_mrad_s[axis] =
+            DroneProtocol_ReadI16Le(packet + 22U + (2U * axis));
+        telemetry->rate_setpoint_mrad_s[axis] =
+            DroneProtocol_ReadI16Le(packet + 28U + (2U * axis));
+        telemetry->pid_command_centi[axis] =
+            DroneProtocol_ReadI16Le(packet + 34U + (2U * axis));
+    }
+    for (motor = 0U; motor < DRONE_PROTOCOL_MOTOR_COUNT; ++motor)
+    {
+        telemetry->motor_pwm_us[motor] =
+            DroneProtocol_ReadU16Le(packet + 40U + (2U * motor));
+        if ((telemetry->motor_pwm_us[motor] < 1000U) ||
+            (telemetry->motor_pwm_us[motor] > 2000U))
+        {
+            return DRONE_PROTOCOL_RANGE_ERROR;
+        }
+    }
+    return DRONE_PROTOCOL_OK;
+}
+
 bool DroneProtocol_IsSequenceNewer(uint16_t candidate, uint16_t reference)
 {
     return (candidate != reference) &&

@@ -76,6 +76,50 @@ static void test_status_round_trip(void)
     assert(output.error_flags == DRONE_ERROR_THROTTLE_CLAMPED);
 }
 
+static void test_flight_telemetry_round_trip(void)
+{
+    DroneFlightTelemetry input = {
+        .header = {.sequence = 99U, .session_id = 0x2A2BU,
+                   .sender_time_ms = 0x12345678U},
+        .attitude_cdeg = {-1234, 567, 890},
+        .gyro_mrad_s = {-1200, 2300, -3400},
+        .rate_setpoint_mrad_s = {100, -200, 300},
+        .pid_command_centi = {456, -789, 1234},
+        .motor_pwm_us = {1000U, 1200U, 1500U, 2000U},
+        .state = DRONE_STATE_ARMED,
+        .actuators_active = true,
+        .attitude_valid = true,
+    };
+    DroneFlightTelemetry output;
+    uint8_t packet[DRONE_FLIGHT_TELEMETRY_PACKET_SIZE];
+
+    assert(DroneProtocol_EncodeFlightTelemetry(&input, packet) ==
+           DRONE_PROTOCOL_OK);
+    assert(packet[3] == DRONE_PACKET_FLIGHT_TELEMETRY);
+    assert(packet[10] == DRONE_FLIGHT_TELEMETRY_PAYLOAD_SIZE);
+    assert(packet[8] == (DRONE_STATE_ARMED |
+                         DRONE_FLIGHT_TELEMETRY_FLAG_ACTUATORS_ACTIVE |
+                         DRONE_FLIGHT_TELEMETRY_FLAG_ATTITUDE_VALID));
+    assert(DroneProtocol_DecodeFlightTelemetry(packet, sizeof(packet),
+                                                &output) == DRONE_PROTOCOL_OK);
+    assert(output.header.sequence == input.header.sequence);
+    assert(output.header.session_id == input.header.session_id);
+    assert(output.header.sender_time_ms == input.header.sender_time_ms);
+    assert(output.attitude_cdeg[0] == -1234);
+    assert(output.gyro_mrad_s[2] == -3400);
+    assert(output.rate_setpoint_mrad_s[1] == -200);
+    assert(output.pid_command_centi[1] == -789);
+    assert(output.motor_pwm_us[3] == 2000U);
+    assert(output.state == DRONE_STATE_ARMED);
+    assert(output.actuators_active);
+    assert(output.attitude_valid);
+
+    packet[42] ^= 1U;
+    assert(DroneProtocol_DecodeFlightTelemetry(packet, sizeof(packet),
+                                                &output) ==
+           DRONE_PROTOCOL_CRC_ERROR);
+}
+
 static void test_control_validation(void)
 {
     DroneControlCommand input = {
@@ -143,6 +187,7 @@ int main(void)
     test_crc_known_vector();
     test_control_round_trip();
     test_status_round_trip();
+    test_flight_telemetry_round_trip();
     test_control_validation();
     test_cobs_and_sequence();
     puts("drone protocol tests: PASS");
