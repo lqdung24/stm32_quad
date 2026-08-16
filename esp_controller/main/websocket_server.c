@@ -151,6 +151,30 @@ esp_err_t websocket_server_start(httpd_handle_t server)
     return ESP_OK;
 }
 
+void websocket_server_disconnect_client(int socket_fd)
+{
+    bool released = false;
+
+    if (s_server == NULL || socket_fd < 0) {
+        return;
+    }
+
+    portENTER_CRITICAL(&s_lock);
+    if (s_client_fd == socket_fd) {
+        s_client_fd = -1;
+        released = true;
+    }
+    portEXIT_CRITICAL(&s_lock);
+
+    if (!released) {
+        return;
+    }
+
+    /* Closing also prevents this stale client from blocking a reconnect. */
+    (void)httpd_sess_trigger_close(s_server, socket_fd);
+    control_bridge_phone_disconnected(socket_fd);
+}
+
 void websocket_server_send_binary(const uint8_t *packet, size_t length)
 {
     if (packet == NULL || length == 0 ||

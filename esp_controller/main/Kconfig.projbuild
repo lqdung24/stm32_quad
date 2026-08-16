@@ -19,7 +19,7 @@ menu "Drone controller"
         config DRONE_WIFI_MAX_CLIENTS
             int "Maximum connected clients"
             range 1 4
-            default 1
+            default 2
     endmenu
 
     menu "STM32 UART link"
@@ -53,5 +53,15 @@ menu "Drone controller"
         int "STM32 status timeout shown by diagnostics (ms)"
         range 100 2000
         default 300
+
+    menu "WS2812 status LED"
+        config DRONE_STATUS_LED_GPIO
+            int "WS2812 data GPIO"
+            range 0 48
+            default 48
+            help
+                GPIO that drives the first WS2812/NeoPixel data input. GPIO48
+                is the onboard RGB LED on common ESP32-S3 DevKit boards.
+    endmenu
 
 endmenu

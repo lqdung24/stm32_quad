@@ -1,6 +1,8 @@
 idf_component_register(
     SRCS
         "main.c"
+        "status_led.c"
+        "telemetry_server.c"
         "control_bridge.c"
         "http_server.c"
         "uart_transport.c"
@@ -19,5 +21,8 @@ idf_component_register(
         esp_timer
         esp_wifi
         nvs_flash
-    EMBED_TXTFILES "web/index.html"
+    EMBED_TXTFILES
+        "web/index.html"
+        "web/style.css"
+        "web/app.js"
 )

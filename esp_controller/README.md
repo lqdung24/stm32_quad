@@ -40,6 +40,27 @@ board before wiring power.
 | GPIO18 (UART1 RX) | PA9 (USART1 TX) | Status to ESP32 |
 | GND | GND | Common signal ground |
 
+### WS2812 status LED
+
+The firmware drives one WS2812/NeoPixel through the ESP-IDF `led_strip` RMT
+backend. The default data pin is GPIO48 (the RGB LED on many ESP32-S3 DevKit
+boards); change **Drone controller → WS2812 status LED → WS2812 data GPIO** in
+`idf.py menuconfig` for an external LED. Connect the LED power and ground
+appropriately for the board, with a common ground.
+
+| LED indication | Device state |
+|---|---|
+| Amber blinking | Firmware starting |
+| Blue blinking | Wi-Fi AP ready; waiting for phone |
+| Cyan blinking | WebSocket connected; waiting for STM32 state |
+| Green solid | STM32 reports disarmed |
+| Red solid | STM32 reports armed |
+| Red double blink | STM32 failsafe or STM32 error while a phone is connected |
+
+When the phone link times out, ESP sends one emergency-stop packet, closes the
+stale WebSocket, and returns to blue AP-ready indication so another phone can
+connect. This phone-link recovery does not hide a real STM32 `ERROR` state.
+
 Motor rotation below is viewed from above. The idle floor includes `20 us`
 above the measured no-prop first-rotation pulse.
 
@@ -68,9 +89,31 @@ Defaults:
 - SSID: `DRONE_TEST`
 - Password: `drone1234`
 - Control page: `http://192.168.4.1`
+- Maximum Wi-Fi clients: `2` (controller + telemetry laptop)
 
 Wi-Fi, UART pins, baud rate, and watchdog timeout can be changed under
 **Drone controller** in `idf.py menuconfig`.
+
+## Flight telemetry over Wi-Fi (50 Hz)
+
+Control and telemetry use separate WebSockets so a slow laptop graph cannot
+block commands. The phone is the only client on `/ws`; one diagnostics client
+may connect to `/telemetry`. The ESP retains only the newest telemetry packet
+when Wi-Fi is slow, rather than queueing data or delaying the control link.
+
+After joining `DRONE_TEST` from a second device, install the host dependencies
+and start the logger from the repository root:
+
+```sh
+python3 -m pip install websocket-client matplotlib
+python3 tools/telemetry_plot.py --url ws://192.168.4.1/telemetry --csv flight.csv
+```
+
+The tool validates CRC, reconnects automatically, writes CSV, and plots
+attitude, body gyro and rate setpoints, PID command, and motor PWM. Packet
+timestamps are STM32 `ms`; attitude is degrees, gyro/setpoint is BODY-FRD
+`rad/s`, PID is the logical mixer correction, and PWM is microseconds. Use
+`--no-plot` for logging only, or `--self-test` to check its packet decoder.
 
 ## Build and flash the STM32H7
 
