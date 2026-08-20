@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Drone Controller</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="launch" class="launch">
+  <div class="launch-card">
+    <h2>Drone Controller</h2>
+    <p>Tháo cánh quạt khi thử nghiệm. Chế độ joystick được tối ưu cho màn hình ngang.</p>
+    <button id="enter">VÀO ĐIỀU KHIỂN</button>
+  </div>
+</div>
+
+<main>
+  <header class="topbar">
+    <div class="brand">
+      <h1>Drone Controller</h1>
+      <p class="sub">Rate control · Quad-X · USB Serial + ESP-NOW</p>
+    </div>
+    <div class="top-actions">
+      <button id="mode-toggle">MỞ JOYSTICK</button>
+      <button id="fullscreen" aria-label="Toàn màn hình">⛶</button>
+    </div>
+  </header>
+
+  <p class="rotate-note">Xoay ngang màn hình để có vùng điều khiển lớn hơn.</p>
+
+  <div id="content" class="test">
+    <section id="left-stick-panel" class="panel stick-panel" hidden>
+      <h2 class="stick-title">Cần trái</h2>
+      <div class="stick-layout">
+        <span class="axis-label axis-up">↑<br>Throttle</span>
+        <span class="axis-label axis-left">← Yaw</span>
+        <div id="left-stick" class="joystick locked" role="slider" aria-label="Throttle và yaw" aria-disabled="true">
+          <div id="left-knob" class="knob"></div>
+        </div>
+        <span class="axis-label axis-right">Yaw →</span>
+        <span class="axis-label axis-down">↓<br>Throttle</span>
+      </div>
+      <div class="stick-readout">Throttle <strong data-command="throttle">0</strong> · Yaw <strong data-command="yaw">0</strong><br><small>Laptop: ↑ / ↓ tăng hoặc giảm ga</small></div>
+    </section>
+
+    <section id="status-panel" class="panel">
+      <div id="mode-badge" class="mode-badge">TEST MOTOR</div>
+      <div class="status-list">
+        <div class="status-row"><span>USB → Ground ESP</span><span data-status="ws" class="status-value bad"><i class="dot"></i>DISCONNECTED</span></div>
+        <div class="status-row"><span>ESP-NOW Ground ↔ Air</span><span data-status="esp" class="status-value bad"><i class="dot"></i>OFFLINE</span></div>
+        <div class="status-row"><span>STM32 link</span><span data-status="stm" class="status-value bad"><i class="dot"></i>OFFLINE</span></div>
+        <div class="status-row"><span>Trạng thái drone</span><span data-status="state" class="status-value">UNKNOWN</span></div>
+        <div class="status-row"><span>Failsafe</span><span data-status="failsafe" class="status-value">UNKNOWN</span></div>
+        <div class="status-row"><span>UART</span><span data-status="rate" class="status-value">0 pkt/s</span></div>
+      </div>
+      <div class="command-mini">
+        <span>Yêu cầu <strong data-command="requested">0 / 500</strong></span>
+        <span>Đã áp dụng <strong data-status="applied">0 / 500</strong></span>
+        <span>Roll <strong data-command="roll">0</strong></span>
+        <span>Pitch <strong data-command="pitch">0</strong></span>
+      </div>
+
+      <div id="test-options" class="test-options">
+        <p>Chế độ kiểm tra</p>
+        <div class="mode-grid">
+          <label id="mode-all-label" class="selected"><input id="mode-all" name="motor-mode" type="radio" value="all" checked>Cả 4 motor</label>
+          <label id="mode-single-label"><input id="mode-single" name="motor-mode" type="radio" value="single">Từng motor</label>
+        </div>
+        <div id="motor-picker" class="motor-picker" hidden>
+          <select id="motor-select" aria-label="Chọn motor">
+            <option value="1">M1 · Front-left · PA6</option>
+            <option value="2">M2 · Rear-left · PA7</option>
+            <option value="3">M3 · Front-right · PB0</option>
+            <option value="4">M4 · Rear-right · PB1</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="arm" data-action="arm">ARM</button>
+        <button class="disarm" data-action="disarm">DISARM</button>
+        <button class="stop" data-action="stop">DỪNG KHẨN CẤP</button>
+      </div>
+    </section>
+
+    <section id="right-stick-panel" class="panel stick-panel" hidden>
+      <h2 class="stick-title">Cần phải</h2>
+      <div class="stick-layout">
+        <span class="axis-label axis-up">↑<br>Pitch forward</span>
+        <span class="axis-label axis-left">← Roll</span>
+        <div id="right-stick" class="joystick locked" role="slider" aria-label="Pitch và roll" aria-disabled="true">
+          <div id="right-knob" class="knob"></div>
+        </div>
+        <span class="axis-label axis-right">Roll →</span>
+        <span class="axis-label axis-down">↓<br>Pitch backward</span>
+      </div>
+      <div class="stick-readout">Roll <strong data-command="roll">0</strong> · Pitch <strong data-command="pitch">0</strong></div>
+    </section>
+
+    <section id="test-panel" class="panel">
+      <span id="throttle-label">Throttle chung 4 motor</span>
+      <output id="requested">0 / 500</output>
+      <input id="slider" type="range" min="0" max="500" step="5" value="0" disabled>
+      <p class="hint">Dead-man: phải giữ tay trên slider; thả tay sẽ về 0 ngay.</p>
+      <div class="motors">
+        <div class="motor selected" data-motor="1">M1 · FL<strong class="motor-pwm">1000 µs</strong></div>
+        <div class="motor selected" data-motor="2">M2 · RL<strong class="motor-pwm">1000 µs</strong></div>
+        <div class="motor selected" data-motor="3">M3 · FR<strong class="motor-pwm">1000 µs</strong></div>
+        <div class="motor selected" data-motor="4">M4 · RR<strong class="motor-pwm">1000 µs</strong></div>
+      </div>
+    </section>
+  </div>
+
+  <p id="message">Nhấn VÀO ĐIỀU KHIỂN rồi chọn cổng USB của ESP32.</p>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
