@@ -36,10 +36,10 @@ static status_led_color_t status_led_color_for(status_led_state_t state,
         /* Amber blink: firmware is starting. */
         return (phase % 5U) < 2U ? (status_led_color_t){20, 8, 0} : off;
     case STATUS_LED_WAITING_FOR_CLIENT:
-        /* Blue blink: AP is ready and waiting for the controller phone. */
+        /* Blue blink: the ground bridge is ready for a USB controller. */
         return (phase % 10U) < 5U ? (status_led_color_t){0, 0, 18} : off;
     case STATUS_LED_CLIENT_CONNECTED:
-        /* Cyan blink: WebSocket is connected; STM32 status is pending. */
+        /* Cyan blink: the ESP-NOW bridge is linked; STM32 status is pending. */
         return (phase % 10U) < 8U ? (status_led_color_t){0, 16, 16} : off;
     case STATUS_LED_DISARMED:
         return (status_led_color_t){0, 20, 0};

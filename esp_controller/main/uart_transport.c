@@ -3,7 +3,6 @@
 #include <string.h>
 
 #include "driver/uart.h"
-#include "dp_cobs.h"
 #include "dp_protocol.h"
 #include "esp_check.h"
 #include "esp_log.h"
@@ -11,44 +10,34 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
+#include "packet_stream.h"
+
 #define UART_READ_CHUNK_SIZE 128
-#define UART_ENCODED_FRAME_SIZE 64
 
 static const char *TAG = "uart_transport";
 static uart_port_t s_uart_port;
 static SemaphoreHandle_t s_tx_lock;
-static uart_transport_packet_callback_t s_packet_callback;
+static packet_stream_t s_stream;
+
+static void uart_packet_received(const uint8_t *packet, size_t length,
+                                 void *context)
+{
+    uart_transport_packet_callback_t callback = context;
+    if (callback != NULL) {
+        callback(packet, length);
+    }
+}
 
 static void uart_rx_task(void *arg)
 {
     (void)arg;
     uint8_t read_buffer[UART_READ_CHUNK_SIZE];
-    uint8_t encoded[UART_ENCODED_FRAME_SIZE];
-    size_t encoded_length = 0;
-
     while (true) {
         const int received = uart_read_bytes(s_uart_port, read_buffer,
                                              sizeof(read_buffer),
                                              pdMS_TO_TICKS(20));
-        for (int i = 0; i < received; ++i) {
-            const uint8_t byte = read_buffer[i];
-            if (byte == 0) {
-                uint8_t raw[DRONE_PROTOCOL_MAX_PACKET_SIZE];
-                const size_t raw_length =
-                    DroneCobs_Decode(encoded, encoded_length,
-                                    raw, sizeof(raw));
-                if (raw_length != 0 && s_packet_callback != NULL) {
-                    s_packet_callback(raw, raw_length);
-                } else if (encoded_length != 0) {
-                    ESP_LOGW(TAG, "Dropped malformed COBS frame");
-                }
-                encoded_length = 0;
-            } else if (encoded_length < sizeof(encoded)) {
-                encoded[encoded_length++] = byte;
-            } else {
-                encoded_length = 0;
-                ESP_LOGW(TAG, "UART frame exceeded maximum size");
-            }
+        if (received > 0) {
+            packet_stream_feed(&s_stream, read_buffer, (size_t)received);
         }
     }
 }
@@ -59,7 +48,7 @@ esp_err_t uart_transport_start(uart_transport_packet_callback_t callback)
                         "packet callback is null");
 
     s_uart_port = (uart_port_t)CONFIG_DRONE_UART_PORT;
-    s_packet_callback = callback;
+    packet_stream_init(&s_stream, uart_packet_received, (void *)callback);
     s_tx_lock = xSemaphoreCreateMutex();
     ESP_RETURN_ON_FALSE(s_tx_lock != NULL, ESP_ERR_NO_MEM, TAG,
                         "cannot create TX mutex");
@@ -98,23 +87,22 @@ esp_err_t uart_transport_start(uart_transport_packet_callback_t callback)
 
 esp_err_t uart_transport_send_packet(const uint8_t *packet, size_t length)
 {
-    uint8_t frame[DRONE_PROTOCOL_MAX_PACKET_SIZE + 3];
+    uint8_t frame[DRONE_PROTOCOL_MAX_PACKET_SIZE + 3U];
 
     if (packet == NULL || length == 0 ||
         length > DRONE_PROTOCOL_MAX_PACKET_SIZE) {
         return ESP_ERR_INVALID_ARG;
     }
-    size_t encoded_length =
-        DroneCobs_Encode(packet, length, frame, sizeof(frame) - 1);
-    if (encoded_length == 0) {
+    const size_t frame_length = packet_stream_encode(packet, length, frame,
+                                                     sizeof(frame));
+    if (frame_length == 0U) {
         return ESP_ERR_INVALID_SIZE;
     }
-    frame[encoded_length++] = 0;
 
     if (xSemaphoreTake(s_tx_lock, pdMS_TO_TICKS(20)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
-    const int written = uart_write_bytes(s_uart_port, frame, encoded_length);
+    const int written = uart_write_bytes(s_uart_port, frame, frame_length);
     xSemaphoreGive(s_tx_lock);
-    return written == (int)encoded_length ? ESP_OK : ESP_FAIL;
+    return written == (int)frame_length ? ESP_OK : ESP_FAIL;
 }

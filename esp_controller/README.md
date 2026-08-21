@@ -1,81 +1,43 @@
-# ESP32-S3 drone control bridge
+# ESP32-S3 USB / ESP-NOW drone bridge
 
-This ESP-IDF 6.0 project creates a Wi-Fi hotspot and serves a mobile web page.
-The page sends binary control packets over WebSocket. The ESP32-S3 validates
-and forwards them over UART to the STM32H7, which is the only controller that
-can drive an ESC.
+This firmware replaces the SoftAP, HTTP, and WebSocket bridge with two
+ESP32-S3 boards:
 
-The web page has two control modes selected by one button. **Joystick** is a
-landscape, Mode-2 style controller: the left stick commands throttle/yaw and
-the right stick commands pitch/roll. The left stick retains throttle when
-released while yaw returns to center; the right stick returns both axes to
-center. Touch the current left-stick knob before dragging so throttle cannot
-jump from an accidental touch. Changing web modes always disarms and clears
-all four commands.
+```text
+Laptop browser -- Web Serial over USB --> ground ESP32 -- ESP-NOW --> air ESP32 -- UART --> STM32H7
+```
 
-The page also retains the no-prop motor selector used during calibration, but
-the current STM32 build has raw threshold-test mode disabled. Keep **All
-motors** selected for normal control; the rate PID and Quad-X mixer now drive
-all four outputs. One shared ARM action gates the outputs, and changing
-selection while throttle is active is rejected by the STM32.
+`DroneProtocol` packets are not translated on either ESP. The ground bridge
+accepts only valid control packets (including the existing CRC), and the air
+bridge accepts only valid control packets before forwarding them to STM32.
+Status and flight telemetry travel back as the same raw protocol bytes.
+Loss of USB or ESP-NOW stops control packets; the existing STM32 command-link
+watchdog remains the motor failsafe authority.
 
-The page is responsive in portrait and landscape and does not request an
-orientation lock. The browser requires periodic `ESP_ALIVE` acknowledgements;
-loss of the ESP WebSocket/heartbeat, loss of STM32 status, hiding the page, or
-closing it clears the local ARM state. Independent ESP-to-STM and
-phone-to-ESP watchdogs remain the authoritative stop paths.
+Link state is derived from valid protocol traffic rather than from
+`esp_now_send()` alone. The Air bridge treats fresh control packets as proof of
+the Ground-to-Air direction. Ground treats a fresh status packet whose
+`last_control_sequence` acknowledges the current browser session as proof of
+the return direction. If Air stops receiving valid STM32 status for 300 ms, it
+sends a synthetic `FAILSAFE` status with `UART_LINK_LOST` to Ground so the UI can
+show ESP-NOW online while reporting the STM32 link offline.
 
-## Safety first
+## Firmware roles
 
-Remove every propeller during bring-up. Power the motors/ESC from a suitable
-external supply; never from either development board. Join the ESP32, STM32,
-and ESC signal grounds. Verify the selected GPIOs against the exact ESP32-S3
-board before wiring power.
+Flash the same project for the two chip targets. The role is selected from the
+target and is no longer stored in `sdkconfig`:
 
-## Default wiring
+- **ESP32-S3 = Ground**: `Web Serial USB to ESP-NOW`; it needs no UART wiring.
+- **ESP32 = Air**: `ESP-NOW to STM32 UART`. Connect GPIO17 to STM32 PA10, GPIO18 to
+  STM32 PA9, and join grounds. UART remains 460800, 8-N-1 by default.
 
-| ESP32-S3 | STM32H743 | Purpose |
-|---|---|---|
-| GPIO17 (UART1 TX) | PA10 (USART1 RX) | Commands to STM32 |
-| GPIO18 (UART1 RX) | PA9 (USART1 TX) | Status to ESP32 |
-| GND | GND | Common signal ground |
-
-### WS2812 status LED
-
-The firmware drives one WS2812/NeoPixel through the ESP-IDF `led_strip` RMT
-backend. The default data pin is GPIO48 (the RGB LED on many ESP32-S3 DevKit
-boards); change **Drone controller → WS2812 status LED → WS2812 data GPIO** in
-`idf.py menuconfig` for an external LED. Connect the LED power and ground
-appropriately for the board, with a common ground.
-
-| LED indication | Device state |
-|---|---|
-| Amber blinking | Firmware starting |
-| Blue blinking | Wi-Fi AP ready; waiting for phone |
-| Cyan blinking | WebSocket connected; waiting for STM32 state |
-| Green solid | STM32 reports disarmed |
-| Red solid | STM32 reports armed |
-| Red double blink | STM32 failsafe or STM32 error while a phone is connected |
-
-When the phone link times out, ESP sends one emergency-stop packet, closes the
-stale WebSocket, and returns to blue AP-ready indication so another phone can
-connect. This phone-link recovery does not hide a real STM32 `ERROR` state.
-
-Motor rotation below is viewed from above. The idle floor includes `20 us`
-above the measured no-prop first-rotation pulse.
-
-| Motor | Position | STM32 output | Rotation | First rotation | Idle floor |
-|---|---|---|---|---:|---:|
-| M1 | front-left | `TIM3_CH1/PA6` | CW | `1200 us` | `1220 us` |
-| M2 | rear-left | `TIM3_CH2/PA7` | CCW | `1205 us` | `1225 us` |
-| M3 | front-right | `TIM3_CH3/PB0` | CCW | `1190 us` | `1210 us` |
-| M4 | rear-right | `TIM3_CH4/PB1` | CW | `1205 us` | `1225 us` |
-
-UART settings are 460800 baud, 8-N-1.
-
-## Build and flash the ESP32-S3
-
-Load the ESP-IDF 6.0 environment, then run:
+At first boot each ESP logs its STA MAC. Put both peer MACs and the shared
+channel in [`main/bridge_config.h`](main/bridge_config.h). Editing this header
+uses the normal incremental build instead of regenerating `sdkconfig`. The
+receive path rejects packets from other MAC addresses. Do this with props
+removed. ESP-NOW is currently unencrypted, so
+operate on an isolated channel and add ESP-NOW link-layer encryption before
+flying outside a controlled test area.
 
 ```sh
 cd esp_controller
@@ -84,67 +46,34 @@ idf.py build
 idf.py -p /dev/ttyACM0 flash monitor
 ```
 
-Defaults:
+## Laptop control page
 
-- SSID: `DRONE_TEST`
-- Password: `drone1234`
-- Control page: `http://192.168.4.1`
-- Maximum Wi-Fi clients: `2` (controller + telemetry laptop)
-
-Wi-Fi, UART pins, baud rate, and watchdog timeout can be changed under
-**Drone controller** in `idf.py menuconfig`.
-
-## Flight telemetry over Wi-Fi (50 Hz)
-
-Control and telemetry use separate WebSockets so a slow laptop graph cannot
-block commands. The phone is the only client on `/ws`; one diagnostics client
-may connect to `/telemetry`. The ESP retains only the newest telemetry packet
-when Wi-Fi is slow, rather than queueing data or delaying the control link.
-
-After joining `DRONE_TEST` from a second device, install the host dependencies
-and start the logger from the repository root:
+The standalone browser files are in [`../web_controller`](../web_controller).
+Serve that directory from localhost, then open it in Chrome or Edge on the
+laptop (Web Serial requires a secure context; `localhost` qualifies):
 
 ```sh
-python3 -m pip install websocket-client matplotlib
-python3 tools/telemetry_plot.py --url ws://192.168.4.1/telemetry --csv flight.csv
+cd web_controller
+python3 -m http.server 8000
 ```
 
-The tool validates CRC, reconnects automatically, writes CSV, and plots
-attitude, body gyro and rate setpoints, PID command, and motor PWM. Packet
-timestamps are STM32 `ms`; attitude is degrees, gyro/setpoint is BODY-FRD
-`rad/s`, PID is the logical mixer correction, and PWM is microseconds. Use
-`--no-plot` for logging only, or `--self-test` to check its packet decoder.
+Open `http://localhost:8000`, press **VÀO ĐIỀU KHIỂN**, and choose the ground
+ESP's native USB Serial/JTAG device. The page frames bytes with COBS for USB;
+each ESP-NOW message and UART packet contains the unchanged DroneProtocol
+payload. Do not use a serial monitor on the same USB port while controlling.
 
-## Build and flash the STM32H7
+Ground prints a one-line link summary every second on UART0 and mirrors that
+single line as a zero-delimited debug frame on native USB Serial/JTAG. A serial
+monitor can therefore read either port during bring-up. The browser discards
+the debug frame without confusing it with a valid protocol packet.
 
-Import the repository root as the STM32CubeIDE project, build the `Debug`
-configuration, and flash it normally. USART1 on PA9/PA10 and TIM3 are already
-configured.
-
-For a command-line verification build with STM32CubeIDE 2.1:
-
-```sh
-/opt/st/stm32cubeide_2.1.0/headless-build.sh \
-  -configuration /tmp/stm32cubeide-config \
-  -data /tmp/stm32cubeide-workspace \
-  -import /absolute/path/to/stm32cube \
-  -cleanBuild stm32_quad_dr/Debug -no-indexer -printErrorMarkers
+```text
+LINK ground usb=UP espnow=UP stm32=UP ctrl=40/s status=20/s tele=50/s invalid=0/s tx_ok=40/s tx_fail=0/s rx_drop=0 seq=1234 ack=1232 err=0x0000
 ```
 
-## Safe test sequence
+`usb` means fresh valid browser control, `espnow` requires a fresh matching
+control acknowledgement, and `stm32` additionally requires status without
+`UART_LINK_LOST`.
 
-1. Keep propellers removed and the ESC motor supply disconnected.
-2. Flash and start both boards; connect the UART and common ground.
-3. Join `DRONE_TEST`, open `http://192.168.4.1`, and confirm STM32 telemetry.
-4. Press **Mở joystick** and rotate the phone to landscape. Switching mode
-   disarms the controller and initializes throttle at zero.
-5. Press **Disarm**, then hold **Arm** once for one second with both sticks at
-   neutral and throttle at zero. The single ARM action covers all four outputs.
-6. Drag the left stick upward from its bottom position for throttle and
-   sideways for yaw. Use the right stick for pitch and roll. Test all signs on
-   a restrained rig before installing propellers.
-7. Confirm that closing the page or disconnecting Wi-Fi produces fail-safe
-   within 300 ms and requires disarm before re-arming.
-
-Protocol details and host tests are in
-[`Components/DroneProtocol`](../Components/DroneProtocol/README.md).
+Keep propellers removed during bring-up. Protocol format and its host tests
+remain in [`../stm32cube/Components/DroneProtocol`](../stm32cube/Components/DroneProtocol).
