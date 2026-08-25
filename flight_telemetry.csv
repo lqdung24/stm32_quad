@@ -1,0 +1,1 @@
+host_time_s,timestamp_ms,sequence,session_id,roll_deg,pitch_deg,yaw_deg,gyro_x_rad_s,gyro_y_rad_s,gyro_z_rad_s,roll_setpoint_rad_s,pitch_setpoint_rad_s,yaw_setpoint_rad_s,pid_roll,pid_pitch,pid_yaw,motor1_us,motor2_us,motor3_us,motor4_us,state,actuators_active,attitude_valid,armed,state_name

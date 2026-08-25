@@ -1,79 +1,87 @@
-# ESP32-S3 USB / ESP-NOW drone bridge
+# ESP-NOW drone link
 
-This firmware replaces the SoftAP, HTTP, and WebSocket bridge with two
-ESP32-S3 boards:
+The radio link is split into two independent ESP-IDF projects because Ground
+and Air use different chips:
 
 ```text
-Laptop browser -- Web Serial over USB --> ground ESP32 -- ESP-NOW --> air ESP32 -- UART --> STM32H7
+Laptop browser -- USB --> Ground ESP32-S3 -- ESP-NOW --> Air ESP32 -- UART --> STM32H7
 ```
 
-`DroneProtocol` packets are not translated on either ESP. The ground bridge
-accepts only valid control packets (including the existing CRC), and the air
-bridge accepts only valid control packets before forwarding them to STM32.
-Status and flight telemetry travel back as the same raw protocol bytes.
-Loss of USB or ESP-NOW stops control packets; the existing STM32 command-link
-watchdog remains the motor failsafe authority.
+```text
+esp_controller/
+├── common/       shared ESP-NOW, framing, LED, and DroneProtocol component
+├── ground_s3/    ESP32-S3 project: Web Serial USB <-> ESP-NOW
+├── air_esp32/    ESP32 project: ESP-NOW <-> STM32 UART
+└── rfid_s3/      standalone ESP32-S3 + MFRC522 USB command tool
+```
 
-Link state is derived from valid protocol traffic rather than from
-`esp_now_send()` alone. The Air bridge treats fresh control packets as proof of
-the Ground-to-Air direction. Ground treats a fresh status packet whose
-`last_control_sequence` acknowledges the current browser session as proof of
-the return direction. If Air stops receiving valid STM32 status for 300 ms, it
-sends a synthetic `FAILSAFE` status with `UART_LINK_LOST` to Ground so the UI can
-show ESP-NOW online while reporting the STM32 link offline.
+Each project fixes `IDF_TARGET` in its own root `CMakeLists.txt` and has its own
+`sdkconfig`, dependency lock, and build directory. Do not run `idf.py
+set-target`; build the desired project directly.
 
-## Firmware roles
+## Configuration
 
-Flash the same project for the two chip targets. The role is selected from the
-target and is no longer stored in `sdkconfig`:
+Set both STA MAC addresses and the shared radio channel in
+[`common/include/bridge_config.h`](common/include/bridge_config.h). Ground
+explicitly uses the Air MAC as its peer, while Air explicitly uses the Ground
+MAC. No role is selected from Kconfig or inferred from the target.
 
-- **ESP32-S3 = Ground**: `Web Serial USB to ESP-NOW`; it needs no UART wiring.
-- **ESP32 = Air**: `ESP-NOW to STM32 UART`. Connect GPIO17 to STM32 PA10, GPIO18 to
-  STM32 PA9, and join grounds. UART remains 460800, 8-N-1 by default.
+Default wiring for the Air ESP32 is:
 
-At first boot each ESP logs its STA MAC. Put both peer MACs and the shared
-channel in [`main/bridge_config.h`](main/bridge_config.h). Editing this header
-uses the normal incremental build instead of regenerating `sdkconfig`. The
-receive path rejects packets from other MAC addresses. Do this with props
-removed. ESP-NOW is currently unencrypted, so
-operate on an isolated channel and add ESP-NOW link-layer encryption before
-flying outside a controlled test area.
+- GPIO17 (ESP TX) -> STM32 PA10 (USART1 RX)
+- GPIO18 (ESP RX) <- STM32 PA9 (USART1 TX)
+- Common ground
+- UART 460800, 8-N-1
+
+These UART settings and each board's WS2812 GPIO remain configurable through
+that project's `idf.py menuconfig`.
+
+## Build and flash
+
+From this directory:
 
 ```sh
-cd esp_controller
-idf.py set-target esp32s3
-idf.py build
-idf.py -p /dev/ttyACM0 flash monitor
+# Ground ESP32-S3
+idf.py -C ground_s3 build
+idf.py -C ground_s3 -p /dev/ttyACM0 flash monitor
+
+# Air ESP32
+idf.py -C air_esp32 build
+idf.py -C air_esp32 -p /dev/ttyUSB0 flash monitor
 ```
+
+Because the build trees are separate, building or flashing one board never
+changes the other board's target or configuration. When using the ESP-IDF VS
+Code extension, open `ground_s3/` or `air_esp32/` as the workspace folder.
+
+## Data path and link status
+
+`DroneProtocol` packets are not translated by either ESP. Ground validates
+browser control packets before sending them over ESP-NOW. Air validates control
+packets before forwarding them to STM32. Status and flight telemetry return as
+the same raw protocol bytes.
+
+Ground derives link state from valid protocol traffic, not only from
+`esp_now_send()`. Air sends a synthetic `FAILSAFE` status with
+`UART_LINK_LOST` if Ground control is fresh but STM32 status has been absent for
+300 ms. The STM32 command watchdog remains the final motor failsafe authority.
+
+At first boot, both projects log their local and configured peer MAC. ESP-NOW
+is currently unencrypted, so use an isolated channel and add ESP-NOW
+link-layer encryption before flying outside a controlled test area.
 
 ## Laptop control page
 
-The standalone browser files are in [`../web_controller`](../web_controller).
-Serve that directory from localhost, then open it in Chrome or Edge on the
-laptop (Web Serial requires a secure context; `localhost` qualifies):
+The standalone browser controller is in `../web_controller`:
 
 ```sh
-cd web_controller
+cd ../web_controller
 python3 -m http.server 8000
 ```
 
-Open `http://localhost:8000`, press **VÀO ĐIỀU KHIỂN**, and choose the ground
-ESP's native USB Serial/JTAG device. The page frames bytes with COBS for USB;
-each ESP-NOW message and UART packet contains the unchanged DroneProtocol
-payload. Do not use a serial monitor on the same USB port while controlling.
+Open `http://localhost:8000` in Chrome or Edge and select the Ground ESP32-S3
+native USB Serial/JTAG device. Do not open a serial monitor on that same USB
+port while the browser controls the drone.
 
-Ground prints a one-line link summary every second on UART0 and mirrors that
-single line as a zero-delimited debug frame on native USB Serial/JTAG. A serial
-monitor can therefore read either port during bring-up. The browser discards
-the debug frame without confusing it with a valid protocol packet.
-
-```text
-LINK ground usb=UP espnow=UP stm32=UP ctrl=40/s status=20/s tele=50/s invalid=0/s tx_ok=40/s tx_fail=0/s rx_drop=0 seq=1234 ack=1232 err=0x0000
-```
-
-`usb` means fresh valid browser control, `espnow` requires a fresh matching
-control acknowledgement, and `stm32` additionally requires status without
-`UART_LINK_LOST`.
-
-Keep propellers removed during bring-up. Protocol format and its host tests
-remain in [`../stm32cube/Components/DroneProtocol`](../stm32cube/Components/DroneProtocol).
+Keep propellers removed during bring-up. The canonical protocol implementation
+and host tests remain in `../stm32cube/Components/DroneProtocol`.
