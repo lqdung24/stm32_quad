@@ -1,0 +1,6 @@
+menu "Drone Ground bridge"
+    config DRONE_STATUS_LED_GPIO
+        int "WS2812 data GPIO"
+        range 0 48
+        default 48
+endmenu

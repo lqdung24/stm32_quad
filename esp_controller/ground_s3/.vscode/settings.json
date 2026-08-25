@@ -1,0 +1,11 @@
+{
+  "idf.currentSetup": "/home/lqdung/.espressif/v6.0/esp-idf",
+  "idf.port": "/dev/ttyACM0",
+  "idf.flashType": "UART",
+  "clangd.path": "/home/lqdung/.espressif/tools/esp-clang/esp-20.1.1_20250829/esp-clang/bin/clangd",
+  "clangd.arguments": [
+    "--background-index",
+    "--query-driver=**",
+    "--compile-commands-dir=${workspaceFolder}/build"
+  ]
+}
