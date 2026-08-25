@@ -1,0 +1,25 @@
+menu "Drone Air bridge"
+    menu "STM32 UART link"
+        config DRONE_UART_PORT
+            int "UART controller number"
+            range 0 2
+            default 1
+        config DRONE_UART_TX_GPIO
+            int "ESP TX GPIO (connect to STM32 USART1 RX/PA10)"
+            range 0 39
+            default 17
+        config DRONE_UART_RX_GPIO
+            int "ESP RX GPIO (connect to STM32 USART1 TX/PA9)"
+            range 0 39
+            default 18
+        config DRONE_UART_BAUD_RATE
+            int "UART baud rate"
+            range 115200 921600
+            default 460800
+    endmenu
+
+    config DRONE_STATUS_LED_GPIO
+        int "WS2812 data GPIO"
+        range 0 39
+        default 2
+endmenu
