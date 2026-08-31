@@ -11,7 +11,7 @@ typedef enum {
     STATUS_LED_FAULT,
 } status_led_state_t;
 
-/* Initialize the shared WS2812 status LED using the RMT backend. */
+/* Initialize the status LED (WS2812 on Ground, ordinary GPIO on Air). */
 esp_err_t status_led_init(void);
 
 /* This function is safe to call from normal FreeRTOS task/event contexts. */

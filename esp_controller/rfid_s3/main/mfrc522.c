@@ -335,6 +335,20 @@ static void finish_card_session(mfrc522_t *device)
     (void)reg_clear_bits(device, REG_STATUS2, 0x08U);
 }
 
+/* Same sequence as stop_crypto_and_reselect() but without an identity check.
+ * After a block 0 rewrite the card answers with its new UID, so the caller
+ * cannot know beforehand which UID to expect. */
+static esp_err_t reselect_any(mfrc522_t *device, mfrc522_card_t *card)
+{
+    (void)halt_card(device);
+    ESP_RETURN_ON_ERROR(reg_clear_bits(device, REG_STATUS2, 0x08U),
+                        "mfrc522", "stop crypto failed");
+    memset(card, 0, sizeof(*card));
+    ESP_RETURN_ON_ERROR(request(device, PICC_WUPA, card->atqa), "mfrc522",
+                        "card wakeup failed");
+    return select_card(device, card);
+}
+
 static esp_err_t card_geometry(uint8_t sak, uint16_t *blocks,
                                uint8_t *sectors)
 {
@@ -411,10 +425,13 @@ static bool mifare_ack(const uint8_t *response, size_t length,
     return length == 1U && valid_bits == 4U && (response[0] & 0x0fU) == 0x0aU;
 }
 
-static esp_err_t write_block(mfrc522_t *device, uint16_t block,
-                             const uint8_t data[MFRC522_BLOCK_BYTES])
+/* Unguarded MIFARE write. Only mfrc522_write_uid may target block 0; every
+ * other caller must go through write_block() so a bad snapshot can never
+ * overwrite the manufacturer block. */
+static esp_err_t write_block_raw(mfrc522_t *device, uint16_t block,
+                                 const uint8_t data[MFRC522_BLOCK_BYTES])
 {
-    if (block == 0U || block > UINT8_MAX) {
+    if (block > UINT8_MAX) {
         return ESP_ERR_INVALID_ARG;
     }
     uint8_t command[4] = {PICC_MF_WRITE, (uint8_t)block};
@@ -441,6 +458,15 @@ static esp_err_t write_block(mfrc522_t *device, uint16_t block,
                                    &response_length, &valid_bits),
                         "mfrc522", "write data failed");
     return mifare_ack(response, response_length, valid_bits) ? ESP_OK : ESP_FAIL;
+}
+
+static esp_err_t write_block(mfrc522_t *device, uint16_t block,
+                             const uint8_t data[MFRC522_BLOCK_BYTES])
+{
+    if (block == 0U) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return write_block_raw(device, block, data);
 }
 
 esp_err_t mfrc522_init(mfrc522_t *device, const mfrc522_config_t *config)
@@ -524,8 +550,11 @@ esp_err_t mfrc522_scan(mfrc522_t *device, mfrc522_card_t *card)
     return select_card(device, card);
 }
 
-static esp_err_t wait_for_card(mfrc522_t *device, mfrc522_card_t *card)
+esp_err_t mfrc522_wait_for_card(mfrc522_t *device, mfrc522_card_t *card)
 {
+    if (device == NULL || card == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
     const int64_t deadline = esp_timer_get_time() + MFRC522_CARD_WAIT_US;
     esp_err_t err;
     do {
@@ -536,6 +565,13 @@ static esp_err_t wait_for_card(mfrc522_t *device, mfrc522_card_t *card)
         vTaskDelay(pdMS_TO_TICKS(50));
     } while (esp_timer_get_time() < deadline);
     return err;
+}
+
+void mfrc522_release(mfrc522_t *device)
+{
+    if (device != NULL) {
+        finish_card_session(device);
+    }
 }
 
 uint16_t mfrc522_sector_first_block(uint8_t sector)
@@ -574,12 +610,16 @@ esp_err_t mfrc522_read_snapshot(
     memset(snapshot, 0, sizeof(*snapshot));
     *read_blocks = 0U;
     *failed_sectors = 0U;
-    ESP_RETURN_ON_ERROR(wait_for_card(device, &snapshot->card), "mfrc522",
-                        "card scan failed");
-    ESP_RETURN_ON_ERROR(card_geometry(snapshot->card.sak,
-                                      &snapshot->block_count,
-                                      &snapshot->sector_count),
-                        "mfrc522", "unsupported card type");
+    ESP_RETURN_ON_ERROR(mfrc522_wait_for_card(device, &snapshot->card),
+                        "mfrc522", "card scan failed");
+    const esp_err_t geometry_err = card_geometry(snapshot->card.sak,
+                                                 &snapshot->block_count,
+                                                 &snapshot->sector_count);
+    if (geometry_err != ESP_OK) {
+        finish_card_session(device);
+        ESP_LOGE("mfrc522", "unsupported card type");
+        return geometry_err;
+    }
 
     for (uint8_t sector = 0U; sector < snapshot->sector_count; ++sector) {
         const uint16_t first = mfrc522_sector_first_block(sector);
@@ -592,6 +632,9 @@ esp_err_t mfrc522_read_snapshot(
                     snapshot->sector_count - sector - 1U);
                 finish_card_session(device);
                 break;
+            }
+            if (sector + 1U == snapshot->sector_count) {
+                finish_card_session(device);
             }
             continue;
         }
@@ -634,15 +677,20 @@ esp_err_t mfrc522_write_snapshot(
         return ESP_ERR_INVALID_ARG;
     }
     memset(stats, 0, sizeof(*stats));
-    ESP_RETURN_ON_ERROR(wait_for_card(device, target), "mfrc522",
+    ESP_RETURN_ON_ERROR(mfrc522_wait_for_card(device, target), "mfrc522",
                         "target scan failed");
     uint16_t target_blocks;
     uint8_t target_sectors;
-    ESP_RETURN_ON_ERROR(card_geometry(target->sak, &target_blocks,
-                                      &target_sectors),
-                        "mfrc522", "unsupported target card");
+    const esp_err_t geometry_err = card_geometry(target->sak, &target_blocks,
+                                                 &target_sectors);
+    if (geometry_err != ESP_OK) {
+        finish_card_session(device);
+        ESP_LOGE("mfrc522", "unsupported target card");
+        return geometry_err;
+    }
     if (target_blocks != snapshot->block_count ||
         target_sectors != snapshot->sector_count) {
+        finish_card_session(device);
         return ESP_ERR_INVALID_SIZE;
     }
 
@@ -655,6 +703,9 @@ esp_err_t mfrc522_write_snapshot(
             has_data |= mfrc522_snapshot_block_valid(snapshot, block);
         }
         if (!has_data) {
+            if (sector + 1U == target_sectors) {
+                finish_card_session(device);
+            }
             continue;
         }
         if (authenticate(device, first, &keys[sector], target) != ESP_OK) {
@@ -669,6 +720,9 @@ esp_err_t mfrc522_write_snapshot(
                 session_failed = true;
                 finish_card_session(device);
                 break;
+            }
+            if (sector + 1U == target_sectors) {
+                finish_card_session(device);
             }
             continue;
         }
@@ -699,4 +753,86 @@ esp_err_t mfrc522_write_snapshot(
     return !session_failed && stats->failed == 0U && stats->succeeded > 0U
                ? ESP_OK
                : ESP_FAIL;
+}
+
+esp_err_t mfrc522_write_uid(mfrc522_t *device, const mfrc522_sector_key_t *keys,
+                            const mfrc522_uid_write_t *request_data,
+                            mfrc522_uid_write_result_t *result)
+{
+    if (device == NULL || keys == NULL || request_data == NULL ||
+        result == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    memset(result, 0, sizeof(*result));
+    ESP_RETURN_ON_ERROR(mfrc522_wait_for_card(device, &result->before),
+                        "mfrc522", "target scan failed");
+
+    /* Reject anything whose block 0 is not a MIFARE Classic manufacturer
+     * block. On Ultralight/NTAG, block 0 holds the UID itself and this write
+     * would permanently brick the tag. */
+    uint16_t blocks;
+    uint8_t sectors;
+    const esp_err_t geometry_err = card_geometry(result->before.sak, &blocks,
+                                                 &sectors);
+    if (geometry_err != ESP_OK) {
+        finish_card_session(device);
+        ESP_LOGE("mfrc522", "unsupported card type");
+        return geometry_err;
+    }
+    if (result->before.uid_length != MFRC522_UID_WRITE_BYTES) {
+        finish_card_session(device);
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    if (authenticate(device, 0U, &keys[0], &result->before) != ESP_OK) {
+        finish_card_session(device);
+        return ESP_ERR_INVALID_STATE;
+    }
+    /* Preserve SAK, ATQA, and manufacturer bytes unless explicitly overridden,
+     * so a card keeps answering exactly as it did before. */
+    if (read_block(device, 0U, result->old_block0) != ESP_OK) {
+        finish_card_session(device);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    memcpy(result->new_block0, result->old_block0, MFRC522_BLOCK_BYTES);
+    memcpy(result->new_block0, request_data->uid, MFRC522_UID_WRITE_BYTES);
+    result->new_block0[4] = (uint8_t)(request_data->uid[0] ^
+                                      request_data->uid[1] ^
+                                      request_data->uid[2] ^
+                                      request_data->uid[3]);
+    if (request_data->set_sak) {
+        result->new_block0[5] = request_data->sak;
+    }
+    if (request_data->set_atqa) {
+        result->new_block0[6] = request_data->atqa[0];
+        result->new_block0[7] = request_data->atqa[1];
+    }
+
+    if (write_block_raw(device, 0U, result->new_block0) != ESP_OK) {
+        finish_card_session(device);
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    result->block0_written = true;
+
+    /* The new UID only takes effect on the next selection. */
+    if (reselect_any(device, &result->after) != ESP_OK) {
+        finish_card_session(device);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    result->reselected = true;
+    result->uid_matches =
+        result->after.uid_length == MFRC522_UID_WRITE_BYTES &&
+        memcmp(result->after.uid, request_data->uid,
+               MFRC522_UID_WRITE_BYTES) == 0;
+
+    uint8_t verify[MFRC522_BLOCK_BYTES];
+    if (authenticate(device, 0U, &keys[0], &result->after) == ESP_OK &&
+        read_block(device, 0U, verify) == ESP_OK) {
+        result->block0_verified =
+            memcmp(verify, result->new_block0, sizeof(verify)) == 0;
+    }
+    finish_card_session(device);
+
+    return (result->block0_verified && result->uid_matches) ? ESP_OK : ESP_FAIL;
 }

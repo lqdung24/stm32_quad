@@ -26,15 +26,22 @@ Set both STA MAC addresses and the shared radio channel in
 explicitly uses the Air MAC as its peer, while Air explicitly uses the Ground
 MAC. No role is selected from Kconfig or inferred from the target.
 
-Default wiring for the Air ESP32 is:
+### Air ESP32 <-> STM32 UART
 
-- GPIO17 (ESP TX) -> STM32 PA10 (USART1 RX)
-- GPIO18 (ESP RX) <- STM32 PA9 (USART1 TX)
-- Common ground
-- UART 460800, 8-N-1
+| Air ESP32 | STM32H743 | Direction / purpose |
+|---|---|---|
+| GPIO17, UART1 TX | PA10, USART1 RX | ESP -> STM32 control commands |
+| GPIO18, UART1 RX | PA9, USART1 TX | STM32 -> ESP status and flight telemetry |
+| GND | GND | Common reference; required |
 
-These UART settings and each board's WS2812 GPIO remain configurable through
-that project's `idf.py menuconfig`.
+The link uses UART1 at **460800 baud, 8 data bits, no parity, 1 stop bit
+(8-N-1)** and no hardware flow control. Both UART sides are 3.3 V logic; do
+not connect a 5 V UART signal. Packets are COBS-framed and terminated with a
+`0x00` delimiter.
+
+These UART settings and the status LED GPIO remain configurable through the
+corresponding project's `idf.py menuconfig`. Ground uses a WS2812 RGB status
+LED by default; Air uses an ordinary active-high status LED by default.
 
 ## Build and flash
 

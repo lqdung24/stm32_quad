@@ -9,9 +9,6 @@
 #include "esp_err.h"
 #include "mfrc522.h"
 #include "usb_console.h"
-#include "esp_timer.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 
 #define RFID_SCLK_GPIO GPIO_NUM_10
 #define RFID_MOSI_GPIO GPIO_NUM_11
@@ -49,11 +46,15 @@ static void print_help(void)
         "  copy                         read UID and all accessible data blocks\r\n"
         "  dump                         print snapshot currently in RAM\r\n"
         "  write                        write/verify data blocks to target card\r\n"
+        "  uid <8 hex|snapshot>         rewrite UID of a CUID/gen2 card\r\n"
+        "       [sak <hh>] [atqa <hhhh>]\r\n"
         "  key <A|B> <all|0..39> <hex> set 6-byte auth key in RAM\r\n"
         "  clear                        erase snapshot and configured keys\r\n"
         "  help                         show this text\r\n"
-        "Notes: block 0 and sector trailers are never written. UID on standard\r\n"
-        "MIFARE Classic cards is immutable; write continues with data only.\r\n");
+        "Notes: write never touches block 0 or sector trailers. UID on standard\r\n"
+        "MIFARE Classic cards is immutable; use uid for CUID/gen2 cards only.\r\n"
+        "uid recomputes the BCC and keeps SAK/ATQA/manufacturer bytes unless\r\n"
+        "overridden.\r\n");
 }
 
 static void reset_keys(void)
@@ -75,13 +76,13 @@ static int hex_nibble(char value)
     return (value >= 'A' && value <= 'F') ? value - 'A' + 10 : -1;
 }
 
-static bool parse_key(const char *text, uint8_t key[6])
+static bool parse_hex(const char *text, uint8_t *bytes, size_t count)
 {
-    if (text == NULL || strlen(text) != 12U)
+    if (text == NULL || strlen(text) != count * 2U)
     {
         return false;
     }
-    for (size_t i = 0U; i < 6U; ++i)
+    for (size_t i = 0U; i < count; ++i)
     {
         const int high = hex_nibble(text[i * 2U]);
         const int low = hex_nibble(text[i * 2U + 1U]);
@@ -89,34 +90,31 @@ static bool parse_key(const char *text, uint8_t key[6])
         {
             return false;
         }
-        key[i] = (uint8_t)((high << 4) | low);
+        bytes[i] = (uint8_t)((high << 4) | low);
     }
     return true;
+}
+
+static bool parse_key(const char *text, uint8_t key[6])
+{
+    return parse_hex(text, key, 6U);
 }
 
 static void command_scan(void)
 {
     mfrc522_card_t card;
-    esp_err_t err = ESP_ERR_TIMEOUT;
-
-    const int64_t deadline = esp_timer_get_time() + 10000000LL; // 10 giây
-
-    while (esp_timer_get_time() < deadline)
+    const esp_err_t err = mfrc522_wait_for_card(&s_reader, &card);
+    if (err != ESP_OK)
     {
-        err = mfrc522_scan(&s_reader, &card);
-
-        if (err == ESP_OK)
-        {
-            print_card(&card);
-            return;
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(100));
+        (void)usb_console_printf(
+            "ERR no readable card after 10 seconds (%s)\r\n",
+            esp_err_to_name(err));
+        return;
     }
-
-    (void)usb_console_printf(
-        "ERR no readable card after 10 seconds (%s)\r\n",
-        esp_err_to_name(err));
+    print_card(&card);
+    /* A selected card stays ACTIVE and would answer neither REQA nor WUPA on
+     * the next scan until it is lifted off the antenna. */
+    mfrc522_release(&s_reader);
 }
 
 static void command_copy(void)
@@ -189,13 +187,130 @@ static void command_write(void)
         print_card(&target);
         const bool same_uid = target.uid_length == s_snapshot.card.uid_length &&
                               memcmp(target.uid, s_snapshot.card.uid, target.uid_length) == 0;
-        (void)usb_console_printf("UID %s; standard-card UID not writable, "
-                                 "data copy continued\r\n",
+        (void)usb_console_printf("UID %s; data copy continued. Use uid to "
+                                 "rewrite the UID of a CUID/gen2 card\r\n",
                                  same_uid ? "already matches" : "differs");
     }
     (void)usb_console_printf("WRITE attempted=%u verified=%u failed=%u result=%s\r\n",
                              stats.attempted, stats.succeeded, stats.failed,
                              esp_err_to_name(err));
+}
+
+static void print_block0(const char *label, const uint8_t block[MFRC522_BLOCK_BYTES])
+{
+    (void)usb_console_printf("  %s ", label);
+    for (size_t byte = 0U; byte < MFRC522_BLOCK_BYTES; ++byte)
+    {
+        (void)usb_console_printf("%02X", block[byte]);
+    }
+    (void)usb_console_write("\r\n");
+}
+
+static void command_uid(char *uid_text, char *save)
+{
+    mfrc522_uid_write_t request = {0};
+
+    if (uid_text != NULL && strcasecmp(uid_text, "snapshot") == 0)
+    {
+        if (!s_snapshot_ready)
+        {
+            (void)usb_console_write("ERR no snapshot; run copy first\r\n");
+            return;
+        }
+        if (s_snapshot.card.uid_length != MFRC522_UID_WRITE_BYTES)
+        {
+            (void)usb_console_printf(
+                "ERR snapshot UID is %u bytes; only 4-byte UIDs can be "
+                "written\r\n",
+                s_snapshot.card.uid_length);
+            return;
+        }
+        memcpy(request.uid, s_snapshot.card.uid, MFRC522_UID_WRITE_BYTES);
+    }
+    else if (!parse_hex(uid_text, request.uid, MFRC522_UID_WRITE_BYTES))
+    {
+        (void)usb_console_write(
+            "ERR usage: uid <8 hex|snapshot> [sak <hh>] [atqa <hhhh>]\r\n");
+        return;
+    }
+
+    /* Optional overrides; anything not given is preserved from the target. */
+    for (char *option = strtok_r(NULL, " \t", &save); option != NULL;
+         option = strtok_r(NULL, " \t", &save))
+    {
+        char *value = strtok_r(NULL, " \t", &save);
+        if (strcasecmp(option, "sak") == 0 &&
+            parse_hex(value, &request.sak, 1U))
+        {
+            request.set_sak = true;
+        }
+        else if (strcasecmp(option, "atqa") == 0 &&
+                 parse_hex(value, request.atqa, 2U))
+        {
+            request.set_atqa = true;
+        }
+        else
+        {
+            (void)usb_console_write(
+                "ERR usage: uid <8 hex|snapshot> [sak <hh>] [atqa <hhhh>]\r\n");
+            return;
+        }
+    }
+
+    (void)usb_console_write("Place UID-writable (CUID/gen2) card on reader...\r\n");
+    mfrc522_uid_write_result_t result;
+    const esp_err_t err = mfrc522_write_uid(&s_reader, s_keys, &request,
+                                            &result);
+
+    if (result.before.uid_length > 0U)
+    {
+        (void)usb_console_write("BEFORE ");
+        print_card(&result.before);
+    }
+    if (result.block0_written)
+    {
+        print_block0("old B000:", result.old_block0);
+        print_block0("new B000:", result.new_block0);
+    }
+    if (result.reselected)
+    {
+        (void)usb_console_write("AFTER  ");
+        print_card(&result.after);
+    }
+
+    if (err == ESP_OK)
+    {
+        (void)usb_console_write("OK UID written and verified\r\n");
+        return;
+    }
+
+    switch (err)
+    {
+    case ESP_ERR_NOT_SUPPORTED:
+        (void)usb_console_write(
+            result.before.uid_length == MFRC522_UID_WRITE_BYTES
+                ? "ERR card rejected the block 0 write; not a CUID/gen2 card\r\n"
+                : "ERR only 4-byte-UID MIFARE Classic cards are supported\r\n");
+        break;
+    case ESP_ERR_INVALID_STATE:
+        (void)usb_console_write(
+            "ERR sector 0 authentication failed; set the right key first\r\n");
+        break;
+    case ESP_ERR_INVALID_RESPONSE:
+        (void)usb_console_printf(
+            "ERR card stopped answering after the write (written=%s)\r\n",
+            result.block0_written ? "yes" : "no");
+        break;
+    default:
+        (void)usb_console_printf(
+            "ERR uid write failed (%s) written=%s reselected=%s uid_match=%s "
+            "verified=%s\r\n",
+            esp_err_to_name(err), result.block0_written ? "yes" : "no",
+            result.reselected ? "yes" : "no",
+            result.uid_matches ? "yes" : "no",
+            result.block0_verified ? "yes" : "no");
+        break;
+    }
 }
 
 static void command_key(char *type_text, char *sector_text, char *key_text)
@@ -270,11 +385,21 @@ static void process_command(char *line)
     {
         command_write();
     }
+    else if (strcasecmp(command, "uid") == 0)
+    {
+        /* Sequenced deliberately: argument evaluation order is unspecified, so
+         * `save` must be read after the UID token has been consumed. */
+        char *uid_text = strtok_r(NULL, " \t", &save);
+        command_uid(uid_text, save);
+    }
     else if (strcasecmp(command, "key") == 0)
     {
-        command_key(strtok_r(NULL, " \t", &save),
-                    strtok_r(NULL, " \t", &save),
-                    strtok_r(NULL, " \t", &save));
+        /* Each token must be consumed in a separate statement; as sibling
+         * arguments the three calls could run in any order. */
+        char *type_text = strtok_r(NULL, " \t", &save);
+        char *sector_text = strtok_r(NULL, " \t", &save);
+        char *key_text = strtok_r(NULL, " \t", &save);
+        command_key(type_text, sector_text, key_text);
     }
     else if (strcasecmp(command, "clear") == 0)
     {

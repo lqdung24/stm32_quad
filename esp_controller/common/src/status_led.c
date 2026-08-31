@@ -6,7 +6,11 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#ifdef CONFIG_DRONE_STATUS_LED_SINGLE_COLOR
+#include "driver/gpio.h"
+#else
 #include "led_strip.h"
+#endif
 
 #define STATUS_LED_INDEX 0U
 #define STATUS_LED_TASK_STACK_BYTES 2048U
@@ -19,8 +23,12 @@ typedef struct {
     uint8_t blue;
 } status_led_color_t;
 
-static const char *TAG = "status_led"; /* shared Ground/Air component */
+#ifdef CONFIG_DRONE_STATUS_LED_SINGLE_COLOR
+static const char *TAG = "status_led"; /* Air: ordinary GPIO LED. */
+#else
+static const char *TAG = "status_led"; /* Ground: WS2812 RGB LED. */
 static led_strip_handle_t s_strip;
+#endif
 static TaskHandle_t s_task;
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static status_led_state_t s_state = STATUS_LED_BOOT;
@@ -64,6 +72,13 @@ static bool status_led_colors_equal(status_led_color_t left,
            left.blue == right.blue;
 }
 
+#ifdef CONFIG_DRONE_STATUS_LED_SINGLE_COLOR
+static bool status_led_is_on(status_led_color_t color)
+{
+    return color.red != 0U || color.green != 0U || color.blue != 0U;
+}
+#endif
+
 static void status_led_task(void *arg)
 {
     (void)arg;
@@ -84,6 +99,10 @@ static void status_led_task(void *arg)
 
         const status_led_color_t color = status_led_color_for(state, phase);
         if (!status_led_colors_equal(color, previous_color)) {
+#ifdef CONFIG_DRONE_STATUS_LED_SINGLE_COLOR
+            (void)gpio_set_level(CONFIG_DRONE_STATUS_LED_GPIO,
+                                 status_led_is_on(color) ? 1 : 0);
+#else
             if (color.red == 0U && color.green == 0U && color.blue == 0U) {
                 (void)led_strip_clear(s_strip);
             } else {
@@ -91,6 +110,7 @@ static void status_led_task(void *arg)
                                           color.red, color.green, color.blue);
                 (void)led_strip_refresh(s_strip);
             }
+#endif
             previous_color = color;
         }
 
@@ -101,6 +121,23 @@ static void status_led_task(void *arg)
 
 esp_err_t status_led_init(void)
 {
+#ifdef CONFIG_DRONE_STATUS_LED_SINGLE_COLOR
+    const gpio_config_t config = {
+        .pin_bit_mask = 1ULL << CONFIG_DRONE_STATUS_LED_GPIO,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    esp_err_t err = gpio_config(&config);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = gpio_set_level(CONFIG_DRONE_STATUS_LED_GPIO, 0);
+    if (err != ESP_OK) {
+        return err;
+    }
+#else
     const led_strip_config_t strip_config = {
         .strip_gpio_num = CONFIG_DRONE_STATUS_LED_GPIO,
         .max_leds = 1,
@@ -122,18 +159,28 @@ esp_err_t status_led_init(void)
         s_strip = NULL;
         return err;
     }
+#endif
 
     if (xTaskCreate(status_led_task, "status_led", STATUS_LED_TASK_STACK_BYTES,
                     NULL, STATUS_LED_TASK_PRIORITY, &s_task) != pdPASS) {
+#ifdef CONFIG_DRONE_STATUS_LED_SINGLE_COLOR
+        (void)gpio_set_level(CONFIG_DRONE_STATUS_LED_GPIO, 0);
+#else
         (void)led_strip_clear(s_strip);
         (void)led_strip_del(s_strip);
         s_strip = NULL;
+#endif
         return ESP_ERR_NO_MEM;
     }
 
     s_initialized = true;
+#ifdef CONFIG_DRONE_STATUS_LED_SINGLE_COLOR
+    ESP_LOGI(TAG, "Single-color status LED on GPIO%d",
+             CONFIG_DRONE_STATUS_LED_GPIO);
+#else
     ESP_LOGI(TAG, "WS2812 status LED on GPIO%d via RMT",
              CONFIG_DRONE_STATUS_LED_GPIO);
+#endif
     return ESP_OK;
 }
 

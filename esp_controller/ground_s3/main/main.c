@@ -16,11 +16,13 @@
 #include "usb_transport.h"
 
 #define LINK_TIMEOUT_MS 300U
+#define CONTROL_KEEPALIVE_PERIOD_MS 20U
 #define LINK_LOG_PERIOD_MS 1000U
 #define LINK_MAX_ACK_LAG_PACKETS 16U
 
 typedef struct {
     bool has_control;
+    bool has_radio_control;
     bool has_status;
     bool has_ack;
     uint32_t last_control_ms;
@@ -80,6 +82,7 @@ static void on_usb_packet(const uint8_t *packet, size_t length)
     }
     portENTER_CRITICAL(&s_ground_link_lock);
     s_ground_link.has_control = true;
+    s_ground_link.has_radio_control = true;
     s_ground_link.last_control_ms = monotonic_ms();
     s_ground_link.control_session = command.header.session_id;
     s_ground_link.control_sequence = command.header.sequence;
@@ -87,6 +90,61 @@ static void on_usb_packet(const uint8_t *packet, size_t length)
     portEXIT_CRITICAL(&s_ground_link_lock);
     if (espnow_transport_send_packet(packet, length) != ESP_OK) {
         ESP_LOGW(TAG, "ESP-NOW transmit failed");
+    }
+}
+
+/*
+ * USB has no reliable connect/disconnect event for the Web Serial client.
+ * After its control stream has been quiet for LINK_TIMEOUT_MS, keep the
+ * radio link alive with fresh, explicit disarm commands.  Each command must
+ * have a new sequence number: STM32 deliberately rejects duplicate sequence
+ * numbers and would otherwise let its command watchdog expire.
+ */
+static void ground_control_keepalive_task(void *arg)
+{
+    (void)arg;
+
+    while (true) {
+        const uint32_t now_ms = monotonic_ms();
+        DroneControlCommand safe_command = {
+            .header = {
+                .session_id = 0U,
+                .sender_time_ms = now_ms,
+            },
+            .throttle = 0U,
+            .roll = 0,
+            .pitch = 0,
+            .yaw = 0,
+            .aux1 = DRONE_CONTROL_MOTOR_SELECT_ALL,
+            .aux2 = 0U,
+        };
+        bool web_control_is_fresh;
+
+        portENTER_CRITICAL(&s_ground_link_lock);
+        web_control_is_fresh = s_ground_link.has_control &&
+            (uint32_t)(now_ms - s_ground_link.last_control_ms) <
+                LINK_TIMEOUT_MS;
+        if (!web_control_is_fresh) {
+            safe_command.header.session_id = s_ground_link.control_session;
+            safe_command.header.sequence =
+                (uint16_t)(s_ground_link.control_sequence + 1U);
+            s_ground_link.control_sequence = safe_command.header.sequence;
+            s_ground_link.has_radio_control = true;
+        }
+        portEXIT_CRITICAL(&s_ground_link_lock);
+
+        if (!web_control_is_fresh) {
+            uint8_t packet[DRONE_CONTROL_PACKET_SIZE];
+            if (DroneProtocol_EncodeControl(&safe_command, packet) !=
+                DRONE_PROTOCOL_OK) {
+                ESP_LOGE(TAG, "Cannot encode control keepalive");
+            } else if (espnow_transport_send_packet(packet, sizeof(packet)) !=
+                       ESP_OK) {
+                ESP_LOGW(TAG, "ESP-NOW control keepalive transmit failed");
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(CONTROL_KEEPALIVE_PERIOD_MS));
     }
 }
 
@@ -107,7 +165,7 @@ static void on_espnow_packet(const uint8_t *packet, size_t length)
         const uint16_t ack_lag =
             (uint16_t)(s_ground_link.control_sequence -
                        status.last_control_sequence);
-        if (s_ground_link.has_control &&
+        if (s_ground_link.has_radio_control &&
             status.header.session_id == s_ground_link.control_session &&
             ack_lag <= LINK_MAX_ACK_LAG_PACKETS) {
             s_ground_link.has_ack = true;
@@ -210,6 +268,11 @@ void app_main(void)
     log_espnow_link_config();
     ESP_ERROR_CHECK(xTaskCreate(ground_link_log_task, "ground_link_log", 4096,
                                 NULL, 5, NULL) == pdPASS
+                        ? ESP_OK
+                        : ESP_ERR_NO_MEM);
+    ESP_ERROR_CHECK(xTaskCreate(ground_control_keepalive_task,
+                                "ground_control_keepalive", 3072, NULL, 9,
+                                NULL) == pdPASS
                         ? ESP_OK
                         : ESP_ERR_NO_MEM);
     status_led_set(STATUS_LED_WAITING_FOR_CLIENT);

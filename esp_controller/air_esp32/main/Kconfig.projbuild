@@ -18,8 +18,15 @@ menu "Drone Air bridge"
             default 460800
     endmenu
 
+    config DRONE_STATUS_LED_SINGLE_COLOR
+        bool "Use a single-color status LED"
+        default y
+        help
+            Drive the status LED as a normal active-high GPIO output rather
+            than a WS2812 RGB LED.
+
     config DRONE_STATUS_LED_GPIO
-        int "WS2812 data GPIO"
+        int "Single-color status LED GPIO"
         range 0 39
         default 2
 endmenu
