@@ -1,8 +1,9 @@
 # ESP32-S3 + MFRC522 card reader/copy tool
 
-Standalone ESP-IDF firmware for an ESP32-S3-WROOM-1-N16R8. It reads the UID
-and accessible MIFARE Classic data blocks, keeps one snapshot in RAM, and can
-write/verify those data blocks on another card through commands received on the
+Standalone ESP-IDF firmware for an ESP32-S3-WROOM-1-N16R8. It uses the
+[`abobija/rc522`](https://components.espressif.com/components/abobija/rc522)
+ESP-IDF component for event-driven card detection and native MIFARE Classic
+authentication, raw block reads, and verified raw block writes through the
 ESP32-S3 native USB Serial/JTAG port.
 
 ## Wiring
@@ -38,19 +39,16 @@ by native USB.
 ## Commands
 
 - `scan` reads UID, SAK, and ATQA.
-- `copy` reads all accessible data blocks into RAM.
-- `dump` prints the snapshot.
-- `write` writes every captured data block to a same-size target card, reads it
-  back, and reports the verification result.
+- `read 4` authenticates and prints data block 4 as 32 hexadecimal characters.
+- `write 4 00112233445566778899AABBCCDDEEFF` authenticates, writes block 4,
+  reads it back, and prints the verified value.
 - `key A all FFFFFFFFFFFF` sets an authentication key for every sector.
 - `key B 7 A0A1A2A3A4A5` sets Key B for sector 7.
-- `clear` erases the snapshot and resets all keys to `FFFFFFFFFFFF`.
+- `clear` resets all keys to `FFFFFFFFFFFF`.
 
 Only MIFARE Classic Mini, 1K, and 4K geometry is supported. The firmware does
 not guess keys. Block 0 and every sector trailer are intentionally excluded
-from writes so a bad dump cannot overwrite access conditions or brick a card.
-UIDs on normal MIFARE Classic cards are factory-programmed and cannot be
-changed; `write` reports whether the target UID differs and still copies data.
-The `copy` and `write` commands wait up to 10 seconds for a card.
+from reads and writes, so access conditions and manufacturer data cannot be
+changed from the console. Commands wait up to 10 seconds for a card.
 
 Use this tool only with cards and systems you own or are authorized to test.

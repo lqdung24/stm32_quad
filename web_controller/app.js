@@ -1,5 +1,10 @@
-const MAGIC = 0xA55A, VERSION = 1, CONTROL = 1, STATUS = 2;
+const MAGIC = 0xA55A, VERSION = 1, CONTROL = 1, STATUS = 2, FLIGHT_TELEMETRY = 7;
 const ARM = 1, ESTOP = 2, ACRO_MODE = 1 << 3, FAILSAFE_ACTIVE = 1 << 9;
+const TELEMETRY_SIZE = 50, TELEMETRY_PAYLOAD_SIZE = 32;
+const TELEMETRY_STATE_MASK = 0x0007, TELEMETRY_ACTUATORS_ACTIVE = 1 << 3;
+const TELEMETRY_ATTITUDE_VALID = 1 << 4, TELEMETRY_ALLOWED_FLAGS = 0x001f;
+const TELEMETRY_HISTORY_MS = 60000, MAX_TELEMETRY_SAMPLES = 4000;
+const MAX_RECORDED_SAMPLES = 180000;
 const UART_LINK_LOST = 1 << 1;
 const STM_TIMEOUT_MS = 300;
 const MAX_ACK_LAG_PACKETS = 16;
@@ -14,6 +19,18 @@ let rollCommand = 0, pitchCommand = 0, yawCommand = 0;
 let controlMode = 'test', motorMode = 'all', selectedMotor = 1;
 let lastStatusAt = 0, lastStatus = null;
 let armTimer = null, serialReaderActive = false, cobsBuffer = [];
+let telemetryHistory = [], recordedTelemetry = [], telemetryArrivalTimes = [];
+let telemetryPacketCount = 0, telemetryInvalidCount = 0, telemetryDropCount = 0;
+let lastTelemetrySequence = null, lastTelemetrySession = null, telemetryRecording = false;
+
+const telemetryColumns = [
+  'host_time_iso','host_time_ms','stm_time_ms','sequence','session_id','state','state_name',
+  'actuators_active','attitude_valid','roll_deg','pitch_deg','yaw_deg',
+  'gyro_roll_rad_s','gyro_pitch_rad_s','gyro_yaw_rad_s',
+  'setpoint_roll_rad_s','setpoint_pitch_rad_s','setpoint_yaw_rad_s',
+  'error_roll_rad_s','error_pitch_rad_s','error_yaw_rad_s',
+  'pid_roll','pid_pitch','pid_yaw','motor1_us','motor2_us','motor3_us','motor4_us'
+];
 
 const fieldNodes = name => document.querySelectorAll(`[data-status="${name}"]`);
 function setStatus(name, text, tone = '') {
@@ -204,6 +221,7 @@ function newSession() {
   crypto.getRandomValues(random);
   session = random[0] || 1; sequence = 0;
   lastStatus = null; lastStatusAt = 0; lastControlSequence = null; lastAcknowledgedAt = 0; emergency = false;
+  lastTelemetrySequence = null; lastTelemetrySession = null;
   forceLocalSafe('', false);
 }
 
@@ -242,8 +260,8 @@ async function readSerial() {
         if (byte === 0) {
           const packet = cobsDecode(cobsBuffer);
           cobsBuffer = [];
-          if (packet) decodeStatus(packet);
-        } else if (cobsBuffer.length <= 51) cobsBuffer.push(byte);
+          if (packet) decodePacket(packet);
+        } else if (cobsBuffer.length < 64) cobsBuffer.push(byte);
         else cobsBuffer = [];
       }
     }
@@ -264,11 +282,21 @@ function serialDisconnected() {
   setStatus('ws','DISCONNECTED','bad');
 }
 
+function decodePacket(data) {
+  if (data.length < 4) return;
+  const view = new DataView(data.buffer,data.byteOffset,data.byteLength);
+  if (view.getUint16(0,true) !== MAGIC || view.getUint8(2) !== VERSION) return;
+  const type = view.getUint8(3);
+  if (type === STATUS) decodeStatus(data);
+  else if (type === FLIGHT_TELEMETRY) decodeFlightTelemetry(data);
+}
+
 function decodeStatus(data) {
   if (data.length !== 38) return;
   const view = new DataView(data.buffer,data.byteOffset,data.byteLength);
   if (view.getUint16(0,true) !== MAGIC || view.getUint8(2) !== VERSION ||
       view.getUint8(3) !== STATUS || view.getUint8(10) !== 20 ||
+      view.getUint8(11) !== 0 ||
       view.getUint16(36,true) !== crc16(data,36)) return;
 
   const statusSession = view.getUint16(6,true), acknowledgedSequence = view.getUint16(16,true);
@@ -291,6 +319,266 @@ function decodeStatus(data) {
     forceLocalSafe('STM32 vào FAILSAFE/ERROR; đã khóa điều khiển và gửi e-stop.', true);
     sendNow();
   }
+}
+
+function decodeFlightTelemetry(data) {
+  const reject = () => {
+    telemetryInvalidCount++;
+    updateTelemetryStats();
+    return false;
+  };
+  if (data.length !== TELEMETRY_SIZE) return reject();
+
+  const view = new DataView(data.buffer,data.byteOffset,data.byteLength);
+  const flags = view.getUint16(8,true);
+  const state = flags & TELEMETRY_STATE_MASK;
+  if (view.getUint16(0,true) !== MAGIC || view.getUint8(2) !== VERSION ||
+      view.getUint8(3) !== FLIGHT_TELEMETRY ||
+      view.getUint8(10) !== TELEMETRY_PAYLOAD_SIZE || view.getUint8(11) !== 0 ||
+      (flags & ~TELEMETRY_ALLOWED_FLAGS) !== 0 || state >= stateNames.length ||
+      view.getUint16(48,true) !== crc16(data,48)) return reject();
+
+  const motorPwmUs = [40,42,44,46].map(offset => view.getUint16(offset,true));
+  if (motorPwmUs.some(pulse => pulse < 1000 || pulse > 2000)) return reject();
+
+  const receivedAtMs = performance.now();
+  const wallTimeMs = Date.now();
+  const sequenceValue = view.getUint16(4,true);
+  const sessionId = view.getUint16(6,true);
+  const attitudeDeg = [16,18,20].map(offset => view.getInt16(offset,true) / 100);
+  const gyroRadS = [22,24,26].map(offset => view.getInt16(offset,true) / 1000);
+  const setpointRadS = [28,30,32].map(offset => view.getInt16(offset,true) / 1000);
+  const pidOutput = [34,36,38].map(offset => view.getInt16(offset,true) / 100);
+  const sample = {
+    receivedAtMs, wallTimeMs, stmTimeMs:view.getUint32(12,true),
+    sequence:sequenceValue, sessionId, state,
+    actuatorsActive:(flags & TELEMETRY_ACTUATORS_ACTIVE) !== 0,
+    attitudeValid:(flags & TELEMETRY_ATTITUDE_VALID) !== 0,
+    attitudeDeg, gyroRadS, setpointRadS,
+    rateErrorRadS:setpointRadS.map((target,index) => target - gyroRadS[index]),
+    pidOutput, motorPwmUs
+  };
+
+  if (lastTelemetrySession === sessionId && lastTelemetrySequence !== null) {
+    const delta = (sequenceValue - lastTelemetrySequence) & 0xffff;
+    if (delta > 1 && delta < 0x8000) telemetryDropCount += delta - 1;
+  }
+  lastTelemetrySession = sessionId;
+  lastTelemetrySequence = sequenceValue;
+  telemetryPacketCount++;
+  telemetryArrivalTimes.push(receivedAtMs);
+  telemetryHistory.push(sample);
+  while (telemetryArrivalTimes.length && telemetryArrivalTimes[0] < receivedAtMs - 1000)
+    telemetryArrivalTimes.shift();
+  while (telemetryHistory.length > MAX_TELEMETRY_SAMPLES ||
+         (telemetryHistory.length && telemetryHistory[0].receivedAtMs < receivedAtMs - TELEMETRY_HISTORY_MS))
+    telemetryHistory.shift();
+
+  if (telemetryRecording) {
+    if (recordedTelemetry.length < MAX_RECORDED_SAMPLES) recordedTelemetry.push(sample);
+    else {
+      telemetryRecording = false;
+      $('record-telemetry').classList.remove('recording');
+      $('record-telemetry').textContent = 'BẮT ĐẦU GHI';
+      $('message').textContent = 'Đã đạt giới hạn 180.000 mẫu; dừng ghi để bảo vệ bộ nhớ trình duyệt.';
+    }
+  }
+  updateTelemetryStats();
+  return true;
+}
+
+function updateTelemetryStats() {
+  const latest = telemetryHistory[telemetryHistory.length - 1];
+  const now = performance.now();
+  while (telemetryArrivalTimes.length && telemetryArrivalTimes[0] < now - 1000)
+    telemetryArrivalTimes.shift();
+  $('telemetry-count').textContent = String(telemetryPacketCount);
+  $('telemetry-rate').textContent = `${telemetryArrivalTimes.length} Hz`;
+  $('telemetry-drops').textContent = String(telemetryDropCount);
+  $('telemetry-invalid').textContent = String(telemetryInvalidCount);
+  $('telemetry-recorded').textContent = String(recordedTelemetry.length);
+  $('save-telemetry-csv').disabled = recordedTelemetry.length === 0;
+  $('save-telemetry-txt').disabled = recordedTelemetry.length === 0;
+  $('telemetry-summary').textContent = latest
+    ? `${stateNames[latest.state]} · ${telemetryArrivalTimes.length} Hz · seq ${latest.sequence}`
+    : 'Chưa có dữ liệu';
+}
+
+function telemetrySeries() {
+  const mode = $('plot-mode').value;
+  const axis = Number($('plot-axis').value);
+  const axisNames = ['Roll','Pitch','Yaw'];
+  if (mode === 'tuning') return [
+    {
+      label:`${axisNames[axis]} rate (rad/s)`,
+      series:[
+        { label:'Setpoint', color:'#ffc96b', value:sample => sample.setpointRadS[axis] },
+        { label:'Gyro', color:'#45b8ff', value:sample => sample.gyroRadS[axis] },
+        { label:'Error', color:'#4ee0a0', value:sample => sample.rateErrorRadS[axis] }
+      ]
+    },
+    {
+      label:`${axisNames[axis]} PID tổng`,
+      series:[{ label:'PID output', color:'#ff7bd5', value:sample => sample.pidOutput[axis] }]
+    }
+  ];
+  if (mode === 'attitude') return [{
+    label:'Attitude (deg)',
+    series:[
+      { label:'Roll', color:'#45b8ff', value:sample => sample.attitudeDeg[0] },
+      { label:'Pitch', color:'#ffc96b', value:sample => sample.attitudeDeg[1] },
+      { label:'Yaw', color:'#ff7bd5', value:sample => sample.attitudeDeg[2] }
+    ]
+  }];
+  return [{
+    label:'Motor PWM (µs)',
+    series:[
+      { label:'M1 FL', color:'#45b8ff', value:sample => sample.motorPwmUs[0] },
+      { label:'M2 RL', color:'#ffc96b', value:sample => sample.motorPwmUs[1] },
+      { label:'M3 FR', color:'#4ee0a0', value:sample => sample.motorPwmUs[2] },
+      { label:'M4 RR', color:'#ff7bd5', value:sample => sample.motorPwmUs[3] }
+    ]
+  }];
+}
+
+function renderTelemetryLegend(panels) {
+  const unique = new Map();
+  panels.forEach(panel => panel.series.forEach(series => unique.set(series.label,series.color)));
+  $('telemetry-legend').replaceChildren(...[...unique].map(([label,color]) => {
+    const item = document.createElement('span');
+    item.textContent = label;
+    item.style.setProperty('--series-color',color);
+    return item;
+  }));
+}
+
+function drawTelemetryPlot() {
+  if (!$('telemetry-panel').open) return;
+  const canvas = $('telemetry-chart');
+  const width = Math.max(320,Math.floor(canvas.clientWidth));
+  const height = Math.max(220,Math.floor(canvas.clientHeight));
+  const pixelRatio = Math.max(1,window.devicePixelRatio || 1);
+  if (canvas.width !== Math.floor(width * pixelRatio) || canvas.height !== Math.floor(height * pixelRatio)) {
+    canvas.width = Math.floor(width * pixelRatio);
+    canvas.height = Math.floor(height * pixelRatio);
+  }
+  const context = canvas.getContext('2d');
+  context.setTransform(pixelRatio,0,0,pixelRatio,0,0);
+  context.clearRect(0,0,width,height);
+  context.fillStyle = '#08111a'; context.fillRect(0,0,width,height);
+
+  const windowMs = Number($('plot-window').value) * 1000;
+  const newestTime = telemetryHistory.length
+    ? telemetryHistory[telemetryHistory.length - 1].receivedAtMs
+    : performance.now();
+  const samples = telemetryHistory.filter(sample => sample.receivedAtMs >= newestTime - windowMs);
+  const panels = telemetrySeries();
+  renderTelemetryLegend(panels);
+  if (!samples.length) {
+    context.fillStyle = '#91a5b8'; context.font = '14px system-ui';
+    context.textAlign = 'center'; context.fillText('Đang chờ FLIGHT_TELEMETRY từ STM32…',width/2,height/2);
+    return;
+  }
+
+  const left = 58, right = 12, top = 16, bottom = 24, gap = panels.length > 1 ? 25 : 0;
+  const panelHeight = (height - top - bottom - gap) / panels.length;
+  const plotWidth = width - left - right;
+  const xFor = sample => left + ((sample.receivedAtMs - (newestTime - windowMs)) / windowMs) * plotWidth;
+
+  panels.forEach((panel,panelIndex) => {
+    const panelTop = top + panelIndex * (panelHeight + gap);
+    const values = panel.series.flatMap(series => samples.map(series.value)).filter(Number.isFinite);
+    let minimum = Math.min(0,...values), maximum = Math.max(0,...values);
+    if (maximum - minimum < 1e-6) { minimum -= 1; maximum += 1; }
+    const padding = (maximum - minimum) * .08;
+    minimum -= padding; maximum += padding;
+    const yFor = value => panelTop + panelHeight - ((value - minimum) / (maximum - minimum)) * panelHeight;
+
+    context.strokeStyle = '#26394b'; context.lineWidth = 1;
+    context.fillStyle = '#91a5b8'; context.font = '10px system-ui'; context.textAlign = 'right';
+    for (let line = 0; line <= 4; line++) {
+      const y = panelTop + panelHeight * line / 4;
+      const value = maximum - (maximum - minimum) * line / 4;
+      context.beginPath(); context.moveTo(left,y); context.lineTo(width-right,y); context.stroke();
+      context.fillText(value.toFixed(Math.abs(value) >= 100 ? 0 : 2),left-5,y+3);
+    }
+    context.fillStyle = '#bde7ff'; context.textAlign = 'left'; context.fillText(panel.label,left,panelTop-5);
+
+    panel.series.forEach(series => {
+      context.strokeStyle = series.color; context.lineWidth = 1.6; context.beginPath();
+      let started = false;
+      samples.forEach(sample => {
+        const value = series.value(sample);
+        if (!Number.isFinite(value)) return;
+        const x = xFor(sample), y = yFor(value);
+        if (!started) { context.moveTo(x,y); started = true; } else context.lineTo(x,y);
+      });
+      context.stroke();
+    });
+  });
+
+  context.fillStyle = '#91a5b8'; context.font = '10px system-ui'; context.textAlign = 'center';
+  context.fillText(`-${Math.round(windowMs/1000)} s`,left,height-7);
+  context.fillText('now',width-right,height-7);
+}
+
+function telemetryRow(sample) {
+  return {
+    host_time_iso:new Date(sample.wallTimeMs).toISOString(), host_time_ms:sample.wallTimeMs,
+    stm_time_ms:sample.stmTimeMs, sequence:sample.sequence, session_id:sample.sessionId,
+    state:sample.state, state_name:stateNames[sample.state],
+    actuators_active:sample.actuatorsActive, attitude_valid:sample.attitudeValid,
+    roll_deg:sample.attitudeDeg[0], pitch_deg:sample.attitudeDeg[1], yaw_deg:sample.attitudeDeg[2],
+    gyro_roll_rad_s:sample.gyroRadS[0], gyro_pitch_rad_s:sample.gyroRadS[1], gyro_yaw_rad_s:sample.gyroRadS[2],
+    setpoint_roll_rad_s:sample.setpointRadS[0], setpoint_pitch_rad_s:sample.setpointRadS[1], setpoint_yaw_rad_s:sample.setpointRadS[2],
+    error_roll_rad_s:sample.rateErrorRadS[0], error_pitch_rad_s:sample.rateErrorRadS[1], error_yaw_rad_s:sample.rateErrorRadS[2],
+    pid_roll:sample.pidOutput[0], pid_pitch:sample.pidOutput[1], pid_yaw:sample.pidOutput[2],
+    motor1_us:sample.motorPwmUs[0], motor2_us:sample.motorPwmUs[1], motor3_us:sample.motorPwmUs[2], motor4_us:sample.motorPwmUs[3]
+  };
+}
+
+function csvValue(value) {
+  const text = String(value);
+  return /[",\r\n]/.test(text) ? `"${text.replaceAll('"','""')}"` : text;
+}
+
+function downloadTelemetry(format) {
+  if (!recordedTelemetry.length) return;
+  const rows = recordedTelemetry.map(telemetryRow);
+  const separator = format === 'csv' ? ',' : '\t';
+  const body = [telemetryColumns.join(separator),...rows.map(row =>
+    telemetryColumns.map(column => format === 'csv' ? csvValue(row[column]) : String(row[column])).join(separator)
+  )].join('\n');
+  const prefix = format === 'txt'
+    ? '# Drone flight telemetry; tab-separated; PID fields are combined controller outputs.\n'
+    : '';
+  const blob = new Blob([prefix,body,'\n'],{type:format === 'csv' ? 'text/csv;charset=utf-8' : 'text/plain;charset=utf-8'});
+  const link = document.createElement('a');
+  const stamp = new Date().toISOString().replace(/[:.]/g,'-');
+  link.href = URL.createObjectURL(blob);
+  link.download = `drone-telemetry-${stamp}.${format}`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href),0);
+}
+
+function toggleTelemetryRecording() {
+  telemetryRecording = !telemetryRecording;
+  const button = $('record-telemetry');
+  button.classList.toggle('recording',telemetryRecording);
+  button.textContent = telemetryRecording ? 'DỪNG GHI' : 'BẮT ĐẦU GHI';
+  $('message').textContent = telemetryRecording
+    ? 'Đang ghi FLIGHT_TELEMETRY vào bộ nhớ trình duyệt; nhấn DỪNG GHI rồi tải CSV/TXT.'
+    : `Đã dừng ghi ở ${recordedTelemetry.length} mẫu; có thể tải CSV hoặc TXT.`;
+}
+
+function clearTelemetryData() {
+  telemetryRecording = false;
+  telemetryHistory = []; recordedTelemetry = []; telemetryArrivalTimes = [];
+  telemetryPacketCount = 0; telemetryInvalidCount = 0; telemetryDropCount = 0;
+  lastTelemetrySequence = null; lastTelemetrySession = null;
+  $('record-telemetry').classList.remove('recording');
+  $('record-telemetry').textContent = 'BẮT ĐẦU GHI';
+  updateTelemetryStats(); drawTelemetryPlot();
 }
 
 document.querySelectorAll('input[name="motor-mode"]').forEach(input => {
@@ -458,6 +746,20 @@ document.addEventListener('visibilitychange',() => {
   }
 });
 
+$('telemetry-panel').addEventListener('toggle',drawTelemetryPlot);
+$('plot-mode').addEventListener('change',() => {
+  $('plot-axis').disabled = $('plot-mode').value !== 'tuning';
+  $('plot-axis-label').classList.toggle('disabled',$('plot-mode').value !== 'tuning');
+  drawTelemetryPlot();
+});
+$('plot-axis').addEventListener('change',drawTelemetryPlot);
+$('plot-window').addEventListener('change',drawTelemetryPlot);
+$('record-telemetry').addEventListener('click',toggleTelemetryRecording);
+$('clear-telemetry').addEventListener('click',clearTelemetryData);
+$('save-telemetry-csv').addEventListener('click',() => downloadTelemetry('csv'));
+$('save-telemetry-txt').addEventListener('click',() => downloadTelemetry('txt'));
+window.addEventListener('resize',drawTelemetryPlot);
+
 setInterval(sendNow,25);
 setInterval(() => {
   const now = performance.now(), usbOnline = writer !== null;
@@ -470,6 +772,8 @@ setInterval(() => {
     forceLocalSafe('Mất status STM32 khi đang ARM; đã khóa điều khiển và gửi e-stop.',true); sendNow();
   }
   if (usbOnline) setStatus('ws','CONNECTED','good');
+  updateTelemetryStats();
+  drawTelemetryPlot();
 },100);
 
-updateCommandUi(); updateMotorModeUi(); renderControlMode();
+updateCommandUi(); updateMotorModeUi(); renderControlMode(); updateTelemetryStats();

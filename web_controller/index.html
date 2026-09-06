@@ -114,6 +114,53 @@
     </section>
   </div>
 
+  <details id="telemetry-panel" class="telemetry-panel">
+    <summary>
+      <span>PID TELEMETRY</span>
+      <span id="telemetry-summary" class="telemetry-summary">Chưa có dữ liệu</span>
+    </summary>
+    <div class="telemetry-content">
+      <div class="telemetry-toolbar">
+        <label>Biểu đồ
+          <select id="plot-mode">
+            <option value="tuning">Rate tracking + PID</option>
+            <option value="attitude">Attitude R/P/Y</option>
+            <option value="motors">PWM 4 motor</option>
+          </select>
+        </label>
+        <label id="plot-axis-label">Trục
+          <select id="plot-axis">
+            <option value="0">Roll</option>
+            <option value="1">Pitch</option>
+            <option value="2">Yaw</option>
+          </select>
+        </label>
+        <label>Cửa sổ
+          <select id="plot-window">
+            <option value="5">5 giây</option>
+            <option value="10" selected>10 giây</option>
+            <option value="20">20 giây</option>
+            <option value="30">30 giây</option>
+          </select>
+        </label>
+        <button id="record-telemetry" type="button">BẮT ĐẦU GHI</button>
+        <button id="clear-telemetry" type="button">XÓA</button>
+        <button id="save-telemetry-csv" type="button" disabled>TẢI CSV</button>
+        <button id="save-telemetry-txt" type="button" disabled>TẢI TXT</button>
+      </div>
+      <div class="telemetry-stats">
+        <span>RX <strong id="telemetry-count">0</strong></span>
+        <span>Rate <strong id="telemetry-rate">0 Hz</strong></span>
+        <span>Drop <strong id="telemetry-drops">0</strong></span>
+        <span>Invalid <strong id="telemetry-invalid">0</strong></span>
+        <span>Đã ghi <strong id="telemetry-recorded">0</strong></span>
+      </div>
+      <canvas id="telemetry-chart" height="300" aria-label="Biểu đồ flight telemetry"></canvas>
+      <div id="telemetry-legend" class="telemetry-legend"></div>
+      <p class="telemetry-note">Rate và setpoint dùng rad/s. PID là tổng correction sau P+I+D; packet hiện tại chưa tách riêng từng P, I và D.</p>
+    </div>
+  </details>
+
   <p id="message">Nhấn VÀO ĐIỀU KHIỂN rồi chọn cổng USB của ESP32.</p>
 </main>
 

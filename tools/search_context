@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+tool_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$tool_dir/.." && pwd)"
+
+if [[ $# -lt 1 ]]; then
+  printf 'Usage: %s <keyword or fixed phrase>\n' "$0" >&2
+  exit 2
+fi
+
+query="$*"
+cd "$repo_root"
+
+set +e
+rg --line-number --ignore-case --glob '*.md' --fixed-strings -- "$query" .context
+status=$?
+set -e
+
+if [[ $status -eq 1 ]]; then
+  printf 'No context matches for: %s\n' "$query"
+  exit 0
+fi
+exit "$status"

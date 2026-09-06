@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+tool_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$tool_dir/.." && pwd)"
+context_root="$repo_root/.context"
+
+if [[ $# -ne 1 ]]; then
+  printf 'Usage: %s <path-relative-to-.context>\n' "$0" >&2
+  exit 2
+fi
+
+requested="${1#./}"
+requested="${requested#.context/}"
+
+case "$requested" in
+  ''|/*|..|../*|*/../*|*/..)
+    printf 'Invalid context path: %s\n' "$1" >&2
+    exit 2
+    ;;
+esac
+
+target="$context_root/$requested"
+if [[ "$target" != *.md || ! -f "$target" ]]; then
+  printf 'Context document not found: .context/%s\n' "$requested" >&2
+  exit 1
+fi
+
+sed -n '1,$p' "$target"

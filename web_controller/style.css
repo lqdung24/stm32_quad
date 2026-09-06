@@ -71,6 +71,47 @@ h1 { margin:0; font-size:clamp(1rem,2.8vw,1.35rem); line-height:1.1; }
   background:#0d1722; color:#ffd09e; text-align:center; font-size:.76rem;
 }
 
+/* Optional telemetry workspace stays collapsed during normal flight control. */
+.telemetry-panel {
+  flex:none; border:1px solid #26394b; border-radius:13px;
+  background:linear-gradient(155deg,#172635,#111c28); overflow:hidden;
+}
+.telemetry-panel > summary {
+  min-height:42px; padding:10px 13px; cursor:pointer; display:flex;
+  align-items:center; justify-content:space-between; gap:12px;
+  color:#bde7ff; font-size:.76rem; font-weight:900; letter-spacing:.04em;
+}
+.telemetry-panel > summary::marker { color:var(--blue); }
+.telemetry-summary { color:var(--muted); font-weight:700; letter-spacing:0; text-align:right; }
+.telemetry-content { padding:0 12px 12px; }
+.telemetry-toolbar {
+  display:grid; grid-template-columns:1.5fr 1fr 1fr repeat(4,auto);
+  gap:7px; align-items:end;
+}
+.telemetry-toolbar label { color:var(--muted); font-size:.68rem; font-weight:750; }
+.telemetry-toolbar select {
+  display:block; width:100%; min-height:38px; margin-top:3px; padding:5px 8px;
+  color:var(--text); border:1px solid #3b4d60; border-radius:8px; background:#0e1823;
+}
+.telemetry-toolbar button { min-height:38px; padding:6px 10px; background:#2b3d50; font-size:.68rem; }
+#record-telemetry { background:#176a9a; }
+#record-telemetry.recording { background:#a92b36; }
+.telemetry-stats {
+  display:flex; flex-wrap:wrap; gap:8px 18px; margin:9px 0 5px; padding:6px 9px;
+  border-radius:8px; background:#0b151f; color:var(--muted); font-size:.7rem;
+}
+.telemetry-stats strong { color:var(--text); }
+#telemetry-chart {
+  display:block; width:100%; height:300px; border:1px solid #26394b;
+  border-radius:9px; background:#08111a;
+}
+.telemetry-legend { display:flex; flex-wrap:wrap; gap:6px 14px; min-height:20px; padding-top:6px; font-size:.68rem; color:var(--muted); }
+.telemetry-legend span::before {
+  content:""; display:inline-block; width:13px; height:3px; margin-right:5px;
+  vertical-align:middle; border-radius:2px; background:var(--series-color);
+}
+.telemetry-note { margin:3px 0 0; color:var(--muted); font-size:.68rem; }
+
 /* Landscape dual-stick controller. */
 .stick-panel { padding:7px 9px 9px; display:flex; flex-direction:column; align-items:center; justify-content:center; }
 .stick-title { margin:0 0 3px; font-size:.85rem; }
@@ -150,6 +191,9 @@ input[type=range] { width:100%; height:66px; accent-color:var(--blue); touch-act
   #content.pilot .stick-panel { grid-row:auto; }
   #content.pilot #status-panel { grid-column:auto; grid-row:auto; }
   .motors { grid-template-columns:1fr 1fr; }
+  .telemetry-toolbar { grid-template-columns:1fr 1fr; }
+  .telemetry-toolbar label:first-child { grid-column:1/-1; }
+  #telemetry-chart { height:250px; }
 }
 @media (orientation:landscape) and (max-height:560px) {
   main { gap:5px; padding-top:5px; padding-bottom:5px; }
@@ -164,4 +208,9 @@ input[type=range] { width:100%; height:66px; accent-color:var(--blue); touch-act
   #message { min-height:25px; padding:4px 8px; }
   #test-panel { padding:8px 11px; }
   input[type=range] { height:48px; }
+  .telemetry-panel > summary { min-height:34px; padding:6px 10px; }
+}
+
+@media (max-width:920px) and (min-width:621px) {
+  .telemetry-toolbar { grid-template-columns:1.5fr 1fr 1fr repeat(2,auto); }
 }
