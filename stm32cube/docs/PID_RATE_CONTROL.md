@@ -256,7 +256,7 @@ state điều khiển thuộc về một context:
 typedef struct
 {
   UART_HandleTypeDef *uart;
-  MotorPwm_Handle_t motors;
+  MotorOutput *motors;
   RateControl rate_control;
   /* Các trường protocol, state machine và failsafe khác. */
 } DroneControlContext;
@@ -612,7 +612,7 @@ Ngoài ra đường disarm/failsafe cũng reset PID:
 ```c
 static void disarm_output(void)
 {
-  MotorPwm_Disarm(&control.motors);
+  (void)MotorOutput_Stop(control.motors);
   RateControl_Reset(&control.rate_control);
   control.applied_throttle = 0U;
 }

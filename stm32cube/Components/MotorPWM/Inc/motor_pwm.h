@@ -5,7 +5,8 @@
 extern "C" {
 #endif
 
-#include "stm32h7xx_hal.h"
+#include "../../Motor/Inc/motor.h"
+#include "../../PwmTimer/Inc/pwm_timer.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -14,48 +15,30 @@ extern "C" {
 
 typedef struct
 {
-  TIM_HandleTypeDef *timer;
-  uint32_t channel[MOTOR_PWM_MOTOR_COUNT];
-  uint16_t disarmed_pulse_us;
-  uint16_t minimum_pulse_us;
-  uint16_t maximum_pulse_us;
-} MotorPwm_Config_t;
+  PwmChannel *channel[MOTOR_PWM_MOTOR_COUNT];
+  uint32_t stop_compare;
+  uint32_t minimum_compare;
+  uint32_t maximum_compare;
+  uint32_t idle_compare[MOTOR_PWM_MOTOR_COUNT];
+} MotorPwm_Config;
 
 typedef struct
 {
-  MotorPwm_Config_t config;
-  uint16_t pulse_us[MOTOR_PWM_MOTOR_COUNT];
-  bool attached;
-  bool armed;
-} MotorPwm_Handle_t;
+  MotorPwm_Config config;
+  float requested_throttle[MOTOR_PWM_MOTOR_COUNT];
+  float applied_throttle[MOTOR_PWM_MOTOR_COUNT];
+  uint16_t compare[MOTOR_PWM_MOTOR_COUNT];
+  bool initialized;
+  bool started;
+} MotorPwm;
 
 /*
- * The timer must count at exactly 1 MHz, so one compare count equals 1 us.
- * The application owns timer/PWM initialization and channel start. Attach only
- * binds an already-running timer and writes the disarmed compare values.
+ * Bind four already-initialized PwmChannel objects to the generic motor
+ * interface. Timer/channel configuration remains exclusively in PwmTimer.
  */
-bool MotorPwm_Attach(MotorPwm_Handle_t *motors,
-                     const MotorPwm_Config_t *config);
-
-/* Arm only removes the software write lock; it does not raise motor pulses. */
-bool MotorPwm_Arm(MotorPwm_Handle_t *motors);
-
-/* Immediately writes the disarmed pulse to all motors and restores the lock. */
-void MotorPwm_Disarm(MotorPwm_Handle_t *motors);
-
-/* motor_index is zero-based: 0..3. Values outside configured limits fail. */
-bool MotorPwm_SetPulseUs(MotorPwm_Handle_t *motors,
-                         uint8_t motor_index,
-                         uint16_t pulse_us);
-
-bool MotorPwm_SetAllPulseUs(MotorPwm_Handle_t *motors,
-                            const uint16_t pulse_us[MOTOR_PWM_MOTOR_COUNT]);
-
-uint16_t MotorPwm_GetPulseUs(const MotorPwm_Handle_t *motors,
-                             uint8_t motor_index);
-
-bool MotorPwm_IsAttached(const MotorPwm_Handle_t *motors);
-bool MotorPwm_IsArmed(const MotorPwm_Handle_t *motors);
+MotorStatus MotorPwm_Init(MotorPwm *driver,
+                          MotorOutput *output,
+                          const MotorPwm_Config *config);
 
 #ifdef __cplusplus
 }

@@ -6,7 +6,7 @@ extern "C" {
 #endif
 
 #include "stm32h7xx_hal.h"
-#include "motor_pwm.h"
+#include "../../Motor/Inc/motor.h"
 #include "../../RateControl/Inc/rate_control.h"
 
 #include <stdbool.h>
@@ -22,8 +22,8 @@ extern "C" {
 typedef struct
 {
   float pid_output[RATE_CONTROL_AXIS_COUNT];
-  float motor_command[MOTOR_PWM_MOTOR_COUNT];
-  uint16_t pulse_us[MOTOR_PWM_MOTOR_COUNT];
+  float motor_command[MOTOR_OUTPUT_MAX_MOTORS];
+  uint16_t pulse_us[MOTOR_OUTPUT_MAX_MOTORS];
   uint16_t applied_throttle;
   float applied_collective;
   float correction_scale;
@@ -32,7 +32,7 @@ typedef struct
   bool correction_scaled;
 } DroneMixerTelemetry;
 
-void DroneControl_Init(UART_HandleTypeDef *uart, MotorPwm_Handle_t *motors);
+void DroneControl_Init(UART_HandleTypeDef *uart, MotorOutput *motors);
 void DroneControl_Process(uint32_t now_ms);
 
 /*

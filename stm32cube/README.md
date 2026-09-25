@@ -9,7 +9,7 @@
 Điện thoại
     │ Wi-Fi
     ▼
-ESP32-S3 ── UART 460800 ── STM32H743 ── PWM 50 Hz ── ESC 1 ── Motor 1
+ESP32-S3 ── UART 460800 ── STM32H743 ── PWM/DShot ── ESC 1 ── Motor 1
     │                         │                       ESC 2 ── Motor 2
     │                         │                       ESC 3 ── Motor 3
     │                         │                       ESC 4 ── Motor 4
@@ -55,6 +55,9 @@ Các trường gồm timestamp STM32, roll/pitch/yaw (độ), gyro BODY-FRD và
 rate-setpoint (rad/s), PID correction mixer, PWM M1..M4, `armed/state`, cờ
 actuator active và cờ attitude valid. Trên máy tính, chạy từ thư mục gốc:
 
+Trường wire `pwm_pulse_us` được giữ để tương thích protocol. Với DShot, giá trị
+này là biểu diễn normalized tương đương 1000..2000, không phải DShot raw value.
+
 ```sh
 python3 -m pip install websocket-client matplotlib
 python3 tools/telemetry_plot.py --csv flight.csv
@@ -96,6 +99,47 @@ PWM hiện được cấu hình:
   riêng (`1220/1225/1210/1225 µs`).
 - PID rate và Quad-X mixer có thể tạo pulse khác nhau cho bốn motor, tối đa
   `2000 µs`; collective tối đa `1800 µs` vẫn chừa headroom cho PID.
+
+### Chọn DShot300 / DShot600
+
+Tầng control luôn dùng cùng một API:
+
+```c
+float throttle[4] = {
+  mix.command[0] / 1000.0f,
+  mix.command[1] / 1000.0f,
+  mix.command[2] / 1000.0f,
+  mix.command[3] / 1000.0f,
+};
+
+MotorOutput_SetAllThrottle(&motors, throttle, 4U);
+MotorOutput_Update(&motors);
+```
+
+Cấu hình hiện tại bật bench DShot300: `APP_DSHOT_TEST_ENABLE=1`, gửi giá trị
+`0` trong 15 giây rồi gửi ga `0.30f` (DShot value 648) cho cả bốn motor mỗi
+1 ms. Flow DShot600 giống hệt khi chọn `APP_MOTOR_OUTPUT_DSHOT600`.
+Bench tự chạy, bỏ qua ARM/DISARM, e-stop và watchdog điều khiển; tháo cánh
+và ngắt nguồn ESC để dừng test.
+
+Chọn giao thức trong `Components/App/Inc/app.h` hoặc build defines:
+
+```c
+#define APP_MOTOR_OUTPUT_PROTOCOL APP_MOTOR_OUTPUT_DSHOT300
+/* Hoặc APP_MOTOR_OUTPUT_DSHOT600 */
+```
+
+Để dùng điều khiển bay bình thường, đặt `APP_DSHOT_TEST_ENABLE=0`; nếu không
+chọn protocol rõ ràng thì dùng PWM 50 Hz. Cờ cũ `APP_DSHOT600_TEST_ENABLE=0`
+vẫn tắt bench; `=1` chọn bench DShot600 khi không có protocol override.
+
+`Components/MotorDshot300` dùng chung encoder/DMA với `MotorDshot`; adapter
+header-only không cần thêm source vào makefile CubeMX. TIM3_UP DMA1 Stream0
+đã có trong source hiện tại. Khi regenerate, kiểm tra DMA, data width, NVIC
+và thứ tự `MX_DMA_Init()` theo `Components/MotorDshot/README.md`.
+Sau khi thêm các component mới, dùng **Refresh + Project Clean/Build** trong
+CubeIDE để managed build sinh lại `Debug/Release` source lists; không sửa thủ
+công các makefile tự sinh.
 
 Nếu motor quay sai chiều, ngắt nguồn rồi đổi chéo **bất kỳ hai trong ba dây
 pha** giữa ESC và motor.

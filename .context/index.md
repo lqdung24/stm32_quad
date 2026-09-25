@@ -19,7 +19,7 @@ Air ESP32
        v
 STM32H743 flight controller
   stm32cube/Components/App
-       +-> DroneControl -> RateControl -> MotorMixer -> MotorPWM -> ESCs
+       +-> DroneControl -> RateControl -> MotorMixer -> MotorOutput -> ESCs
        +-> ICM20948 -> Attitude -> Mahony9 -> attitude/rate telemetry
 
 RFID utility (standalone)
@@ -30,6 +30,7 @@ RFID utility (standalone)
 
 | Path | Responsibility | Detail document |
 |---|---|---|
+| `dshot600_test/` | Standalone DShot600 stopped-motor beacon diagnostic firmware; HSI/PLL 225 MHz, direct TIM3 registers without DMA, bare-metal loop, USB CDC diagnostics | `../dshot600_test/README.md` |
 | `web_controller/` | Browser UI, Web Serial, control packet generation, local link watchdog | `domains/control-safety.md`, `domains/drone-protocol.md` |
 | `esp_controller/ground_s3/` | USB ↔ ESP-NOW ground bridge, keepalive and link health | `domains/esp-link.md` |
 | `esp_controller/air_esp32/` | ESP-NOW ↔ STM32 UART air bridge, synthetic UART-loss status | `domains/esp-link.md` |
@@ -39,7 +40,11 @@ RFID utility (standalone)
 | `stm32cube/Components/DroneControl/` | Command validation, state machine, failsafe and telemetry TX | `domains/control-safety.md` |
 | `stm32cube/Components/RateControl/` | Three-axis body-rate PID | `domains/control-safety.md` |
 | `stm32cube/Components/MotorMixer/` | Quad-X mixing and saturation handling | `domains/control-safety.md` |
-| `stm32cube/Components/MotorPWM/` | Timer compare output and arm/disarm gate | `domains/control-safety.md` |
+| `stm32cube/Components/Motor/` | Protocol-independent four-motor output and arm/disarm gate | `domains/control-safety.md` |
+| `stm32cube/Components/MotorPWM/` | Standard PWM ESC output driver | `domains/control-safety.md` |
+| `stm32cube/Components/MotorDshot/` | Shared DShot300/600 encoding and synchronized DMA output | `domains/control-safety.md` |
+| `stm32cube/Components/MotorDshot300/` | DShot300 adapter using the shared DShot motor driver | `domains/control-safety.md` |
+| `stm32cube/Components/PwmTimer/` | STM32 timer/PWM/DMA hardware abstraction | `domains/control-safety.md` |
 | `stm32cube/Components/DroneProtocol/` | Canonical packet, CRC, endian and COBS implementation | `domains/drone-protocol.md` |
 | `stm32cube/Components/ICM20948/` | SPI IMU and internal-I2C AK09916 driver | `domains/hardware-sensors.md` |
 | `stm32cube/Components/Attitude/` | Sensor-to-body frames, units and calibration | `domains/hardware-sensors.md` |

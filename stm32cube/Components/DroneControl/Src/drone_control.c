@@ -3,7 +3,7 @@
 #include "dp_cobs.h"
 #include "dp_protocol.h"
 #include "../../MotorMixer/Inc/motor_mixer.h"
-#include "motor_pwm.h"
+#include "../../Motor/Inc/motor.h"
 
 #include <stdbool.h>
 #include <math.h>
@@ -17,28 +17,6 @@
 #define CONTROL_ESC_MAX_PULSE_US 2000U
 #define CONTROL_PILOT_IDLE_PULSE_US 1225U
 #define CONTROL_PILOT_MAX_PULSE_US 1800U
-/*
- * No-prop first-rotation measurements, expressed above the 1000 us disarmed
- * pulse. Rotation is viewed from above: M1/M4 CW and M2/M3 CCW. The active
- * floor adds 20 us so each motor stays reliably above its measured threshold.
- */
-#define CONTROL_M1_FIRST_ROTATION_OFFSET_US 200U
-#define CONTROL_M2_FIRST_ROTATION_OFFSET_US 205U
-#define CONTROL_M3_FIRST_ROTATION_OFFSET_US 190U
-#define CONTROL_M4_FIRST_ROTATION_OFFSET_US 205U
-#define CONTROL_MOTOR_IDLE_MARGIN_US 20U
-#define CONTROL_M1_IDLE_PULSE_US                                      \
-    (CONTROL_ESC_MIN_PULSE_US + CONTROL_M1_FIRST_ROTATION_OFFSET_US + \
-     CONTROL_MOTOR_IDLE_MARGIN_US)
-#define CONTROL_M2_IDLE_PULSE_US                                      \
-    (CONTROL_ESC_MIN_PULSE_US + CONTROL_M2_FIRST_ROTATION_OFFSET_US + \
-     CONTROL_MOTOR_IDLE_MARGIN_US)
-#define CONTROL_M3_IDLE_PULSE_US                                      \
-    (CONTROL_ESC_MIN_PULSE_US + CONTROL_M3_FIRST_ROTATION_OFFSET_US + \
-     CONTROL_MOTOR_IDLE_MARGIN_US)
-#define CONTROL_M4_IDLE_PULSE_US                                      \
-    (CONTROL_ESC_MIN_PULSE_US + CONTROL_M4_FIRST_ROTATION_OFFSET_US + \
-     CONTROL_MOTOR_IDLE_MARGIN_US)
 #define CONTROL_MOTOR_THRESHOLD_TEST_MODE 0U
 #define CONTROL_DEG_TO_RAD 0.01745329252f
 #define CONTROL_ROLL_PITCH_MAX_RATE_RAD_S (200.0f * CONTROL_DEG_TO_RAD)
@@ -47,7 +25,7 @@
 typedef struct
 {
     UART_HandleTypeDef *uart;
-    MotorPwm_Handle_t *motors;
+    MotorOutput *motors;
     RateControl rate_control;
     volatile uint16_t rx_head;
     volatile uint16_t rx_tail;
@@ -96,43 +74,27 @@ static void process_control_command(const DroneControlCommand *command,
 static void enter_failsafe(uint16_t reason);
 static void disarm_output(void);
 static bool apply_throttle(uint16_t requested);
-static float throttle_to_pwm(uint16_t throttle);
+static float throttle_to_mixer_command(uint16_t throttle);
 static bool apply_mixed_output(float roll_correction,
                                float pitch_correction,
                                float yaw_correction);
 static void publish_mixer_telemetry(const MotorMixerResult *mix,
-                                    const uint16_t pulses[MOTOR_PWM_MOTOR_COUNT],
+                                    const uint16_t pulses[MOTOR_OUTPUT_MAX_MOTORS],
                                     float roll_correction,
                                     float pitch_correction,
                                     float yaw_correction,
                                     bool active);
 static void publish_disarmed_telemetry(void);
+static uint16_t get_legacy_motor_output(uint8_t motor_index);
 static bool send_status(uint32_t now_ms);
 static bool send_flight_telemetry(void);
 static bool try_send_packet(const uint8_t *raw, size_t raw_length);
 static bool scale_to_i16(float value, float scale, int16_t *output);
 
-static const MotorMixerOutputConfig mixer_output_config = {
-    .disarmed_pulse_us = CONTROL_ESC_MIN_PULSE_US,
-    .idle_pulse_us = {
-        [MOTOR_MIXER_M1_FRONT_LEFT] = CONTROL_M1_IDLE_PULSE_US,
-        [MOTOR_MIXER_M2_REAR_LEFT] = CONTROL_M2_IDLE_PULSE_US,
-        [MOTOR_MIXER_M3_FRONT_RIGHT] = CONTROL_M3_IDLE_PULSE_US,
-        [MOTOR_MIXER_M4_REAR_RIGHT] = CONTROL_M4_IDLE_PULSE_US,
-    },
-    .maximum_pulse_us = CONTROL_ESC_MAX_PULSE_US,
-};
-
-_Static_assert(CONTROL_PILOT_IDLE_PULSE_US >= CONTROL_M1_IDLE_PULSE_US,
-               "pilot idle must cover M1 idle floor");
-_Static_assert(CONTROL_PILOT_IDLE_PULSE_US >= CONTROL_M2_IDLE_PULSE_US,
-               "pilot idle must cover M2 idle floor");
-_Static_assert(CONTROL_PILOT_IDLE_PULSE_US >= CONTROL_M3_IDLE_PULSE_US,
-               "pilot idle must cover M3 idle floor");
-_Static_assert(CONTROL_PILOT_IDLE_PULSE_US >= CONTROL_M4_IDLE_PULSE_US,
-               "pilot idle must cover M4 idle floor");
 _Static_assert(CONTROL_PILOT_MAX_PULSE_US <= CONTROL_ESC_MAX_PULSE_US,
                "pilot maximum must leave valid actuator headroom");
+_Static_assert(MOTOR_OUTPUT_MAX_MOTORS == MOTOR_MIXER_MOTOR_COUNT,
+               "motor output and mixer counts must match");
 
 /*
  * Initial bench gains. Output is a normalized mixer correction, not us.
@@ -172,7 +134,7 @@ static const RateControlConfig rate_control_config = {
     },
 };
 
-void DroneControl_Init(UART_HandleTypeDef *uart, MotorPwm_Handle_t *motors)
+void DroneControl_Init(UART_HandleTypeDef *uart, MotorOutput *motors)
 {
     memset(&control, 0, sizeof(control));
     control.uart = uart;
@@ -183,7 +145,7 @@ void DroneControl_Init(UART_HandleTypeDef *uart, MotorPwm_Handle_t *motors)
 
     if ((uart == NULL) || (motors == NULL) ||
         !RateControl_Init(&control.rate_control, &rate_control_config) ||
-        !MotorPwm_IsAttached(motors))
+        !MotorOutput_IsReady(motors))
     {
         control.state = DRONE_STATE_ERROR;
         control.error_flags |= DRONE_ERROR_PWM_INIT;
@@ -275,7 +237,7 @@ bool DroneControl_GetMixerTelemetry(DroneMixerTelemetry *telemetry)
             telemetry->pid_output[axis] =
                 control.mixer_telemetry.pid_output[axis];
         }
-        for (motor = 0U; motor < MOTOR_PWM_MOTOR_COUNT; ++motor)
+        for (motor = 0U; motor < MOTOR_OUTPUT_MAX_MOTORS; ++motor)
         {
             telemetry->motor_command[motor] =
                 control.mixer_telemetry.motor_command[motor];
@@ -348,7 +310,7 @@ void DroneControl_PublishFlightTelemetrySample(uint32_t timestamp_ms,
             return;
         }
     }
-    for (motor = 0U; motor < MOTOR_PWM_MOTOR_COUNT; ++motor)
+    for (motor = 0U; motor < MOTOR_OUTPUT_MAX_MOTORS; ++motor)
     {
         telemetry.motor_pwm_us[motor] = control.mixer_telemetry.pulse_us[motor];
         if ((telemetry.motor_pwm_us[motor] < CONTROL_ESC_MIN_PULSE_US) ||
@@ -603,6 +565,10 @@ static void process_control_command(const DroneControlCommand *command,
     if (!arm_requested)
     {
         disarm_output();
+        if (control.state == DRONE_STATE_ERROR)
+        {
+            return;
+        }
         control.state = DRONE_STATE_DISARMED;
         if (command->throttle == 0U)
         {
@@ -629,7 +595,7 @@ static void process_control_command(const DroneControlCommand *command,
             control.error_flags |= DRONE_ERROR_ARM_REJECTED;
             return;
         }
-        if (!MotorPwm_Arm(control.motors))
+        if (MotorOutput_Start(control.motors) != MOTOR_OK)
         {
             control.state = DRONE_STATE_ERROR;
             control.error_flags |= DRONE_ERROR_PWM_INIT;
@@ -662,7 +628,13 @@ static void enter_failsafe(uint16_t reason)
 
 static void disarm_output(void)
 {
-    MotorPwm_Disarm(control.motors);
+    MotorStatus motor_status = MotorOutput_Stop(control.motors);
+
+    if ((motor_status != MOTOR_OK) && (motor_status != MOTOR_BUSY))
+    {
+        control.error_flags |= DRONE_ERROR_PWM_INIT;
+        control.state = DRONE_STATE_ERROR;
+    }
     RateControl_Reset(&control.rate_control);
     control.applied_throttle = 0U;
     publish_disarmed_telemetry();
@@ -695,18 +667,19 @@ static bool apply_throttle(uint16_t requested)
         control.rate_control.debug.output[RATE_CONTROL_YAW]);
 }
 
-static float throttle_to_pwm(uint16_t throttle)
+static float throttle_to_mixer_command(uint16_t throttle)
 {
     float normalized;
 
     if (throttle == 0U)
     {
-        return (float)CONTROL_ESC_MIN_PULSE_US;
+        return 0.0f;
     }
 
     normalized = (float)(throttle - 1U) /
                  (float)(DRONE_CONTROL_MAX_TEST_THROTTLE - 1U);
-    return (float)CONTROL_PILOT_IDLE_PULSE_US +
+    return (float)(CONTROL_PILOT_IDLE_PULSE_US -
+                   CONTROL_ESC_MIN_PULSE_US) +
            (normalized * (float)(CONTROL_PILOT_MAX_PULSE_US -
                                  CONTROL_PILOT_IDLE_PULSE_US));
 }
@@ -716,45 +689,62 @@ static bool apply_mixed_output(float roll_correction,
                                float yaw_correction)
 {
     MotorMixerResult mix;
-    uint16_t pulses[MOTOR_PWM_MOTOR_COUNT];
-    const float collective_pwm =
-        throttle_to_pwm(control.applied_throttle);
+    float normalized[MOTOR_OUTPUT_MAX_MOTORS];
+    uint16_t pulses[MOTOR_OUTPUT_MAX_MOTORS];
     const float collective_command =
-        collective_pwm - (float)CONTROL_ESC_MIN_PULSE_US;
+        throttle_to_mixer_command(control.applied_throttle);
     const bool active =
         (control.state == DRONE_STATE_ARMED) &&
         (control.applied_throttle > 0U);
+    MotorStatus motor_status;
+    uint8_t motor;
 
     if (!MotorMixer_MixQuadX(collective_command,
                              roll_correction,
                              pitch_correction,
                              yaw_correction,
-                             &mix) ||
-        !MotorMixer_MapToPulseUs(&mixer_output_config,
-                                 mix.command,
-                                 active,
-                                 pulses))
+                             &mix))
     {
         return false;
+    }
+    for (motor = 0U; motor < MOTOR_OUTPUT_MAX_MOTORS; ++motor)
+    {
+        normalized[motor] = active ? (mix.command[motor] / 1000.0f) : 0.0f;
     }
 #if CONTROL_MOTOR_THRESHOLD_TEST_MODE
     if (active &&
         (control.motor_test_selection != DRONE_CONTROL_MOTOR_SELECT_ALL))
     {
-        uint8_t motor;
-        for (motor = 0U; motor < MOTOR_PWM_MOTOR_COUNT; ++motor)
+        for (motor = 0U; motor < MOTOR_OUTPUT_MAX_MOTORS; ++motor)
         {
             if (control.motor_test_selection != (uint8_t)(motor + 1U))
             {
                 mix.command[motor] = 0.0f;
-                pulses[motor] = mixer_output_config.disarmed_pulse_us;
+                normalized[motor] = 0.0f;
             }
         }
     }
 #endif
-    if (!MotorPwm_SetAllPulseUs(control.motors, pulses))
+    motor_status = MotorOutput_SetAllThrottle(control.motors,
+                                              normalized,
+                                              MOTOR_OUTPUT_MAX_MOTORS);
+    if (motor_status != MOTOR_OK)
     {
         return false;
+    }
+    motor_status = MotorOutput_Update(control.motors);
+    if (motor_status == MOTOR_BUSY)
+    {
+        /* The staged bank is retained and will be committed next update. */
+        return true;
+    }
+    if (motor_status != MOTOR_OK)
+    {
+        return false;
+    }
+    for (motor = 0U; motor < MOTOR_OUTPUT_MAX_MOTORS; ++motor)
+    {
+        pulses[motor] = get_legacy_motor_output(motor);
     }
     publish_mixer_telemetry(&mix,
                             pulses,
@@ -767,7 +757,7 @@ static bool apply_mixed_output(float roll_correction,
 
 static void publish_mixer_telemetry(
     const MotorMixerResult *mix,
-    const uint16_t pulses[MOTOR_PWM_MOTOR_COUNT],
+    const uint16_t pulses[MOTOR_OUTPUT_MAX_MOTORS],
     float roll_correction,
     float pitch_correction,
     float yaw_correction,
@@ -787,7 +777,7 @@ static void publish_mixer_telemetry(
     {
         control.mixer_telemetry.pid_output[axis] = pid_output[axis];
     }
-    for (motor = 0U; motor < MOTOR_PWM_MOTOR_COUNT; ++motor)
+    for (motor = 0U; motor < MOTOR_OUTPUT_MAX_MOTORS; ++motor)
     {
         control.mixer_telemetry.motor_command[motor] = mix->command[motor];
         control.mixer_telemetry.pulse_us[motor] = pulses[motor];
@@ -813,14 +803,31 @@ static void publish_disarmed_telemetry(void)
         .collective_shifted = false,
         .correction_scaled = false,
     };
-    uint16_t pulses[MOTOR_PWM_MOTOR_COUNT];
+    uint16_t pulses[MOTOR_OUTPUT_MAX_MOTORS];
     uint8_t motor;
 
-    for (motor = 0U; motor < MOTOR_PWM_MOTOR_COUNT; ++motor)
+    for (motor = 0U; motor < MOTOR_OUTPUT_MAX_MOTORS; ++motor)
     {
-        pulses[motor] = MotorPwm_GetPulseUs(control.motors, motor);
+        pulses[motor] = get_legacy_motor_output(motor);
     }
     publish_mixer_telemetry(&mix, pulses, 0.0f, 0.0f, 0.0f, false);
+}
+
+static uint16_t get_legacy_motor_output(uint8_t motor_index)
+{
+    float throttle;
+
+    if (MotorOutput_GetProtocol(control.motors) == MOTOR_PROTOCOL_PWM)
+    {
+        return MotorOutput_GetRawOutput(control.motors, motor_index);
+    }
+
+    /* Preserve the existing wire field until the protocol gains output type. */
+    throttle = MotorOutput_GetThrottle(control.motors, motor_index);
+    return (uint16_t)(CONTROL_ESC_MIN_PULSE_US +
+                      (throttle * (float)(CONTROL_ESC_MAX_PULSE_US -
+                                          CONTROL_ESC_MIN_PULSE_US)) +
+                      0.5f);
 }
 
 static bool send_status(uint32_t now_ms)
@@ -841,10 +848,9 @@ static bool send_status(uint32_t now_ms)
     uint8_t motor;
     uint8_t raw[DRONE_STATUS_PACKET_SIZE];
 
-    for (motor = 0U; motor < MOTOR_PWM_MOTOR_COUNT; ++motor)
+    for (motor = 0U; motor < MOTOR_OUTPUT_MAX_MOTORS; ++motor)
     {
-        status.pwm_pulse_us[motor] =
-            MotorPwm_GetPulseUs(control.motors, motor);
+        status.pwm_pulse_us[motor] = get_legacy_motor_output(motor);
     }
 
     if ((control.uart == NULL) ||

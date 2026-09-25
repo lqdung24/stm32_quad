@@ -32,6 +32,48 @@ extern "C" {
 #define APP_MIXER_LOG_ENABLE 1U
 #endif
 
+#define APP_MOTOR_OUTPUT_PWM      0U
+#define APP_MOTOR_OUTPUT_DSHOT600 1U
+#define APP_MOTOR_OUTPUT_DSHOT300 2U
+
+/* Bench debug: remove propellers. Disable this flag before normal control.
+ * Honor the old DShot600 flag so existing builds can still disable the bench. */
+#ifndef APP_DSHOT_TEST_ENABLE
+#ifdef APP_DSHOT600_TEST_ENABLE
+#define APP_DSHOT_TEST_ENABLE APP_DSHOT600_TEST_ENABLE
+#else
+#define APP_DSHOT_TEST_ENABLE 1U
+#endif
+#endif
+#if defined(APP_DSHOT600_TEST_ENABLE) && \
+    (APP_DSHOT600_TEST_ENABLE != APP_DSHOT_TEST_ENABLE)
+#error "Conflicting legacy and generic DShot bench flags"
+#endif
+
+#ifndef APP_MOTOR_OUTPUT_PROTOCOL
+#if APP_DSHOT_TEST_ENABLE
+#if defined(APP_DSHOT600_TEST_ENABLE) && APP_DSHOT600_TEST_ENABLE
+#define APP_MOTOR_OUTPUT_PROTOCOL APP_MOTOR_OUTPUT_DSHOT600
+#else
+#define APP_MOTOR_OUTPUT_PROTOCOL APP_MOTOR_OUTPUT_DSHOT300
+#endif
+#else
+#define APP_MOTOR_OUTPUT_PROTOCOL APP_MOTOR_OUTPUT_PWM
+#endif
+#endif
+
+#define APP_MOTOR_OUTPUT_IS_DSHOT \
+    ((APP_MOTOR_OUTPUT_PROTOCOL == APP_MOTOR_OUTPUT_DSHOT300) || \
+     (APP_MOTOR_OUTPUT_PROTOCOL == APP_MOTOR_OUTPUT_DSHOT600))
+
+#if APP_DSHOT_TEST_ENABLE && !APP_MOTOR_OUTPUT_IS_DSHOT
+#error "DShot bench test requires DShot300 or DShot600 output"
+#endif
+#if (APP_MOTOR_OUTPUT_PROTOCOL != APP_MOTOR_OUTPUT_PWM) && \
+    !APP_MOTOR_OUTPUT_IS_DSHOT
+#error "APP_MOTOR_OUTPUT_PROTOCOL must select PWM, DShot300 or DShot600"
+#endif
+
 typedef uint8_t (*App_UsbTransmitFn)(uint8_t *data, uint16_t length);
 
 typedef struct

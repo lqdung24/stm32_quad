@@ -22,8 +22,11 @@ RM := rm -rf
 -include Core/Startup/subdir.mk
 -include Core/Src/subdir.mk
 -include Components/RateControl/Src/subdir.mk
+-include Components/PwmTimer/Src/subdir.mk
 -include Components/MotorPWM/Src/subdir.mk
 -include Components/MotorMixer/Src/subdir.mk
+-include Components/MotorDshot/Src/subdir.mk
+-include Components/Motor/Src/subdir.mk
 -include Components/Mahony9/Src/subdir.mk
 -include Components/Mahony/Src/subdir.mk
 -include Components/ICM20948/Src/subdir.mk

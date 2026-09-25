@@ -1,29 +1,38 @@
 # Motor PWM
 
-Four-channel standard ESC PWM output.
+Standard four-channel ESC PWM implementation of `MotorOutput`.
 
-## Hardware used by the application
+`MotorPwm` owns throttle policy only: normalized mapping, per-motor idle floor,
+stop compare, and cached applied output. Timer/channel configuration and every
+CCR write are delegated to `PwmTimer`/`PwmChannel`.
 
-Rotation direction is stated while viewing the drone from above.
+Application configuration:
 
-| Motor | Position | Timer/GPIO | Rotation | First rotation | Configured idle |
-|---|---|---|---|---:|---:|
-| M1 | front-left | `TIM3_CH1/PA6` | CW | `1200 us` | `1220 us` |
-| M2 | rear-left | `TIM3_CH2/PA7` | CCW | `1205 us` | `1225 us` |
-| M3 | front-right | `TIM3_CH3/PB0` | CCW | `1190 us` | `1210 us` |
-| M4 | rear-right | `TIM3_CH4/PB1` | CW | `1205 us` | `1225 us` |
+| Motor | Position | Channel/GPIO | Rotation | Idle compare |
+|---|---|---|---|---:|
+| M1 | front-left | TIM3_CH1/PA6 | CW | 1220 |
+| M2 | rear-left | TIM3_CH2/PA7 | CCW | 1225 |
+| M3 | front-right | TIM3_CH3/PB0 | CCW | 1210 |
+| M4 | rear-right | TIM3_CH4/PB1 | CW | 1225 |
 
-The configured idle values are `20 us` above the no-prop first-rotation
-measurements.
+TIM3 uses a 60 MHz input, 1 MHz counter, and 20000-count period. Consequently
+compare counts equal microseconds and the output remains 50 Hz.
 
-TIM3 runs from a 60 MHz timer clock. The prescaler is 59, giving a 1 MHz
-counter, and ARR is 19999, giving standard 50 Hz ESC PWM.
+Initialization outline:
 
-## Pulse convention
+```c
+PwmTimer timer;
+PwmChannel channel[4];
+MotorPwm pwm_driver;
+MotorOutput motors;
 
-- 1000 us: disarmed/minimum throttle
-- 2000 us: maximum throttle
-
-The application owns TIM/PWM initialization, channel configuration and channel
-start. `MotorPwm_Attach()` only binds the running timer, writes the disarmed
-compare values and provides the arm/disarm write gate.
+/* Initialize timer once, then initialize/start CH1..CH4. */
+MotorPwm_Config config = {
+  .channel = {&channel[0], &channel[1], &channel[2], &channel[3]},
+  .stop_compare = 1000U,
+  .minimum_compare = 1000U,
+  .maximum_compare = 2000U,
+  .idle_compare = {1220U, 1225U, 1210U, 1225U},
+};
+MotorPwm_Init(&pwm_driver, &motors, &config);
+```

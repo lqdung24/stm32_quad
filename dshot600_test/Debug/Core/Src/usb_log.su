@@ -1,0 +1,2 @@
+../Core/Src/usb_log.c:15:6:UsbLog_Init	112	static
+../Core/Src/usb_log.c:37:6:UsbLog_Step	648	static,ignoring_inline_asm

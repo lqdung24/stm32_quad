@@ -1,0 +1,9 @@
+../Drivers/CMSIS/Include/core_cm7.h:1949:22:__NVIC_DisableIRQ	16	static,ignoring_inline_asm
+../Core/Inc/dshot_encode.h:5:24:Dshot_PacketWithTelemetry	24	static
+../Core/Inc/dshot_encode.h:10:20:Dshot_EncodeWithTelemetry	40	static
+../Core/Src/dshot_bench.c:9:13:pins_low	4	static
+../Core/Src/dshot_bench.c:18:13:fail	16	static
+../Core/Src/dshot_bench.c:33:45:send_frame	16	static,ignoring_inline_asm
+../Core/Src/dshot_bench.c:73:6:DshotBench_Init	88	static,ignoring_inline_asm
+../Core/Src/dshot_bench.c:139:5:DshotBench_RequestBeacon	16	static
+../Core/Src/dshot_bench.c:150:6:DshotBench_Step	320	static

@@ -29,8 +29,11 @@ Components/DroneProtocol/Src \
 Components/ICM20948/Src \
 Components/Mahony/Src \
 Components/Mahony9/Src \
+Components/Motor/Src \
+Components/MotorDshot/Src \
 Components/MotorMixer/Src \
 Components/MotorPWM/Src \
+Components/PwmTimer/Src \
 Components/RateControl/Src \
 Core/Src \
 Core/Startup \

@@ -38,12 +38,24 @@ Components/App/Src/app.o: ../Components/App/Src/app.c \
  ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_pcd.h \
  ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_ll_usb.h \
  ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_pcd_ex.h \
- ../Components/App/Inc/app_rtos.h ../Components/Attitude/Inc/attitude.h \
+ ../Components/App/Inc/app_rtos.h ../Components/App/Inc/app_dshot_test.h \
+ ../Components/App/Inc/../../Motor/Inc/motor.h \
+ ../Components/Attitude/Inc/attitude.h \
  ../Components/DroneControl/Inc/drone_control.h \
- ../Components/MotorPWM/Inc/motor_pwm.h \
+ ../Components/DroneControl/Inc/../../Motor/Inc/motor.h \
  ../Components/DroneControl/Inc/../../RateControl/Inc/rate_control.h \
  ../Components/ICM20948/Inc/icm20948.h \
- ../Components/Mahony9/Inc/mahony9.h
+ ../Components/Mahony9/Inc/mahony9.h \
+ ../Components/App/Src/../../Motor/Inc/motor.h \
+ ../Components/App/Src/../../MotorDshot/Inc/motor_dshot.h \
+ ../Components/App/Src/../../MotorDshot/Inc/../../Motor/Inc/motor.h \
+ ../Components/App/Src/../../MotorDshot/Inc/../../PwmTimer/Inc/pwm_timer.h \
+ ../Components/App/Src/../../MotorDshot300/Inc/motor_dshot300.h \
+ ../Components/App/Src/../../MotorDshot300/Inc/../../MotorDshot/Inc/motor_dshot.h \
+ ../Components/App/Src/../../MotorPWM/Inc/motor_pwm.h \
+ ../Components/App/Src/../../MotorPWM/Inc/../../Motor/Inc/motor.h \
+ ../Components/App/Src/../../MotorPWM/Inc/../../PwmTimer/Inc/pwm_timer.h \
+ ../Components/App/Src/../../PwmTimer/Inc/pwm_timer.h
 ../Components/App/Inc/app.h:
 ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal.h:
 ../Core/Inc/stm32h7xx_hal_conf.h:
@@ -84,9 +96,21 @@ Components/App/Src/app.o: ../Components/App/Src/app.c \
 ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_ll_usb.h:
 ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_pcd_ex.h:
 ../Components/App/Inc/app_rtos.h:
+../Components/App/Inc/app_dshot_test.h:
+../Components/App/Inc/../../Motor/Inc/motor.h:
 ../Components/Attitude/Inc/attitude.h:
 ../Components/DroneControl/Inc/drone_control.h:
-../Components/MotorPWM/Inc/motor_pwm.h:
+../Components/DroneControl/Inc/../../Motor/Inc/motor.h:
 ../Components/DroneControl/Inc/../../RateControl/Inc/rate_control.h:
 ../Components/ICM20948/Inc/icm20948.h:
 ../Components/Mahony9/Inc/mahony9.h:
+../Components/App/Src/../../Motor/Inc/motor.h:
+../Components/App/Src/../../MotorDshot/Inc/motor_dshot.h:
+../Components/App/Src/../../MotorDshot/Inc/../../Motor/Inc/motor.h:
+../Components/App/Src/../../MotorDshot/Inc/../../PwmTimer/Inc/pwm_timer.h:
+../Components/App/Src/../../MotorDshot300/Inc/motor_dshot300.h:
+../Components/App/Src/../../MotorDshot300/Inc/../../MotorDshot/Inc/motor_dshot.h:
+../Components/App/Src/../../MotorPWM/Inc/motor_pwm.h:
+../Components/App/Src/../../MotorPWM/Inc/../../Motor/Inc/motor.h:
+../Components/App/Src/../../MotorPWM/Inc/../../PwmTimer/Inc/pwm_timer.h:
+../Components/App/Src/../../PwmTimer/Inc/pwm_timer.h:

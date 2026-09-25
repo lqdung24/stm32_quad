@@ -1,178 +1,277 @@
-#include "motor_pwm.h"
+#include "../Inc/motor_pwm.h"
 
+#include <math.h>
 #include <stddef.h>
+#include <string.h>
 
-static bool MotorPwm_ConfigValid(const MotorPwm_Config_t *config);
-static void MotorPwm_WriteCompare(const MotorPwm_Handle_t *motors,
-                                  uint8_t motor_index,
-                                  uint16_t pulse_us);
-static void MotorPwm_WriteDisarmed(MotorPwm_Handle_t *motors);
+static MotorStatus MotorPwm_Start(void *driver_context);
+static MotorStatus MotorPwm_Stop(void *driver_context);
+static MotorStatus MotorPwm_SetThrottle(void *driver_context,
+                                        uint8_t motor_index,
+                                        float throttle);
+static MotorStatus MotorPwm_SetAllThrottle(void *driver_context,
+                                           const float *throttle,
+                                           uint8_t motor_count);
+static MotorStatus MotorPwm_Update(void *driver_context);
+static bool MotorPwm_IsStarted(const void *driver_context);
+static float MotorPwm_GetThrottle(const void *driver_context,
+                                  uint8_t motor_index);
+static uint16_t MotorPwm_GetRawOutput(const void *driver_context,
+                                      uint8_t motor_index);
+static bool MotorPwm_ConfigValid(const MotorPwm_Config *config);
+static uint32_t MotorPwm_ThrottleToCompare(const MotorPwm *driver,
+                                           uint8_t motor_index,
+                                           float throttle);
+static MotorStatus MotorPwm_WriteStop(MotorPwm *driver);
 
-bool MotorPwm_Attach(MotorPwm_Handle_t *motors,
-                     const MotorPwm_Config_t *config)
+static const MotorOps motor_pwm_ops = {
+  .start = MotorPwm_Start,
+  .stop = MotorPwm_Stop,
+  .set_throttle = MotorPwm_SetThrottle,
+  .set_all_throttle = MotorPwm_SetAllThrottle,
+  .update = MotorPwm_Update,
+  .is_started = MotorPwm_IsStarted,
+  .get_throttle = MotorPwm_GetThrottle,
+  .get_raw_output = MotorPwm_GetRawOutput,
+};
+
+MotorStatus MotorPwm_Init(MotorPwm *driver,
+                          MotorOutput *output,
+                          const MotorPwm_Config *config)
 {
-  uint8_t i;
+  MotorStatus status;
 
-  if ((motors == NULL) || !MotorPwm_ConfigValid(config))
+  if ((driver == NULL) || (output == NULL) ||
+      !MotorPwm_ConfigValid(config))
   {
-    return false;
+    return MOTOR_INVALID_ARGUMENT;
   }
 
-  motors->config = *config;
-  motors->attached = false;
-  motors->armed = false;
-
-  for (i = 0U; i < MOTOR_PWM_MOTOR_COUNT; ++i)
+  memset(driver, 0, sizeof(*driver));
+  driver->config = *config;
+  status = MotorPwm_WriteStop(driver);
+  if (status != MOTOR_OK)
   {
-    __HAL_TIM_SET_COMPARE(config->timer,
-                          config->channel[i],
-                          config->disarmed_pulse_us);
-    motors->pulse_us[i] = config->disarmed_pulse_us;
+    return status;
   }
+  driver->initialized = true;
 
-  motors->attached = true;
-  return true;
+  status = MotorOutput_Init(output,
+                            &motor_pwm_ops,
+                            driver,
+                            MOTOR_PWM_MOTOR_COUNT,
+                            MOTOR_PROTOCOL_PWM);
+  if (status != MOTOR_OK)
+  {
+    driver->initialized = false;
+  }
+  return status;
 }
 
-bool MotorPwm_Arm(MotorPwm_Handle_t *motors)
+static MotorStatus MotorPwm_Start(void *driver_context)
 {
-  if ((motors == NULL) || !motors->attached)
-  {
-    return false;
-  }
+  MotorPwm *driver = (MotorPwm *)driver_context;
+  MotorStatus status;
 
-  MotorPwm_WriteDisarmed(motors);
-  motors->armed = true;
-  return true;
+  if ((driver == NULL) || !driver->initialized)
+  {
+    return MOTOR_INVALID_ARGUMENT;
+  }
+  status = MotorPwm_WriteStop(driver);
+  if (status == MOTOR_OK)
+  {
+    driver->started = true;
+  }
+  return status;
 }
 
-void MotorPwm_Disarm(MotorPwm_Handle_t *motors)
+static MotorStatus MotorPwm_Stop(void *driver_context)
 {
-  if ((motors == NULL) || !motors->attached)
-  {
-    return;
-  }
+  MotorPwm *driver = (MotorPwm *)driver_context;
+  MotorStatus status;
 
-  MotorPwm_WriteDisarmed(motors);
-  motors->armed = false;
+  if ((driver == NULL) || !driver->initialized)
+  {
+    return MOTOR_INVALID_ARGUMENT;
+  }
+  status = MotorPwm_WriteStop(driver);
+  driver->started = false;
+  return status;
 }
 
-bool MotorPwm_SetPulseUs(MotorPwm_Handle_t *motors,
-                         uint8_t motor_index,
-                         uint16_t pulse_us)
+static MotorStatus MotorPwm_SetThrottle(void *driver_context,
+                                        uint8_t motor_index,
+                                        float throttle)
 {
-  if ((motors == NULL) ||
-      !motors->attached ||
-      !motors->armed ||
-      (motor_index >= MOTOR_PWM_MOTOR_COUNT) ||
-      (pulse_us < motors->config.minimum_pulse_us) ||
-      (pulse_us > motors->config.maximum_pulse_us))
-  {
-    return false;
-  }
+  MotorPwm *driver = (MotorPwm *)driver_context;
 
-  MotorPwm_WriteCompare(motors, motor_index, pulse_us);
-  motors->pulse_us[motor_index] = pulse_us;
-  return true;
+  if ((driver == NULL) || !driver->initialized || !driver->started ||
+      (motor_index >= MOTOR_PWM_MOTOR_COUNT) || !isfinite(throttle) ||
+      (throttle < 0.0f) || (throttle > 1.0f))
+  {
+    return MOTOR_INVALID_ARGUMENT;
+  }
+  driver->requested_throttle[motor_index] = throttle;
+  return MOTOR_OK;
 }
 
-bool MotorPwm_SetAllPulseUs(MotorPwm_Handle_t *motors,
-                            const uint16_t pulse_us[MOTOR_PWM_MOTOR_COUNT])
+static MotorStatus MotorPwm_SetAllThrottle(void *driver_context,
+                                           const float *throttle,
+                                           uint8_t motor_count)
 {
-  uint8_t i;
+  MotorPwm *driver = (MotorPwm *)driver_context;
+  uint8_t motor;
 
-  if ((motors == NULL) ||
-      (pulse_us == NULL) ||
-      !motors->attached ||
-      !motors->armed)
+  if ((driver == NULL) || !driver->initialized || !driver->started ||
+      (throttle == NULL) || (motor_count != MOTOR_PWM_MOTOR_COUNT))
   {
-    return false;
+    return MOTOR_INVALID_ARGUMENT;
   }
-
-  for (i = 0U; i < MOTOR_PWM_MOTOR_COUNT; ++i)
+  for (motor = 0U; motor < MOTOR_PWM_MOTOR_COUNT; ++motor)
   {
-    if ((pulse_us[i] < motors->config.minimum_pulse_us) ||
-        (pulse_us[i] > motors->config.maximum_pulse_us))
+    if (!isfinite(throttle[motor]) || (throttle[motor] < 0.0f) ||
+        (throttle[motor] > 1.0f))
     {
-      return false;
+      return MOTOR_INVALID_ARGUMENT;
     }
   }
-
-  for (i = 0U; i < MOTOR_PWM_MOTOR_COUNT; ++i)
-  {
-    MotorPwm_WriteCompare(motors, i, pulse_us[i]);
-    motors->pulse_us[i] = pulse_us[i];
-  }
-
-  return true;
+  memcpy(driver->requested_throttle,
+         throttle,
+         sizeof(driver->requested_throttle));
+  return MOTOR_OK;
 }
 
-uint16_t MotorPwm_GetPulseUs(const MotorPwm_Handle_t *motors,
-                             uint8_t motor_index)
+static MotorStatus MotorPwm_Update(void *driver_context)
 {
-  if ((motors == NULL) ||
-      !motors->attached ||
+  MotorPwm *driver = (MotorPwm *)driver_context;
+  uint32_t compare[MOTOR_PWM_MOTOR_COUNT];
+  uint8_t motor;
+
+  if ((driver == NULL) || !driver->initialized || !driver->started)
+  {
+    return MOTOR_ERROR;
+  }
+
+  for (motor = 0U; motor < MOTOR_PWM_MOTOR_COUNT; ++motor)
+  {
+    compare[motor] = MotorPwm_ThrottleToCompare(
+        driver, motor, driver->requested_throttle[motor]);
+  }
+  for (motor = 0U; motor < MOTOR_PWM_MOTOR_COUNT; ++motor)
+  {
+    if (PwmChannel_SetCompare(driver->config.channel[motor],
+                              compare[motor]) != PWM_TIMER_OK)
+    {
+      return MOTOR_ERROR;
+    }
+  }
+  for (motor = 0U; motor < MOTOR_PWM_MOTOR_COUNT; ++motor)
+  {
+    driver->compare[motor] = (uint16_t)compare[motor];
+    driver->applied_throttle[motor] = driver->requested_throttle[motor];
+  }
+  return MOTOR_OK;
+}
+
+static bool MotorPwm_IsStarted(const void *driver_context)
+{
+  const MotorPwm *driver = (const MotorPwm *)driver_context;
+
+  return (driver != NULL) && driver->initialized && driver->started;
+}
+
+static float MotorPwm_GetThrottle(const void *driver_context,
+                                  uint8_t motor_index)
+{
+  const MotorPwm *driver = (const MotorPwm *)driver_context;
+
+  if ((driver == NULL) || !driver->initialized ||
+      (motor_index >= MOTOR_PWM_MOTOR_COUNT))
+  {
+    return 0.0f;
+  }
+  return driver->applied_throttle[motor_index];
+}
+
+static uint16_t MotorPwm_GetRawOutput(const void *driver_context,
+                                      uint8_t motor_index)
+{
+  const MotorPwm *driver = (const MotorPwm *)driver_context;
+
+  if ((driver == NULL) || !driver->initialized ||
       (motor_index >= MOTOR_PWM_MOTOR_COUNT))
   {
     return 0U;
   }
-
-  return motors->pulse_us[motor_index];
+  return driver->compare[motor_index];
 }
 
-bool MotorPwm_IsAttached(const MotorPwm_Handle_t *motors)
+static bool MotorPwm_ConfigValid(const MotorPwm_Config *config)
 {
-  return (motors != NULL) && motors->attached;
-}
+  PwmTimer *shared_timer;
+  uint8_t motor;
 
-bool MotorPwm_IsArmed(const MotorPwm_Handle_t *motors)
-{
-  return (motors != NULL) && motors->attached && motors->armed;
-}
-
-static bool MotorPwm_ConfigValid(const MotorPwm_Config_t *config)
-{
-  uint8_t i;
-
-  if ((config == NULL) ||
-      (config->timer == NULL) ||
-      (config->disarmed_pulse_us > config->minimum_pulse_us) ||
-      (config->minimum_pulse_us >= config->maximum_pulse_us) ||
-      (config->maximum_pulse_us > config->timer->Init.Period))
+  if ((config == NULL) || (config->channel[0] == NULL) ||
+      !config->channel[0]->initialized ||
+      (config->stop_compare > config->minimum_compare) ||
+      (config->minimum_compare >= config->maximum_compare) ||
+      (config->maximum_compare > UINT16_MAX))
   {
     return false;
   }
 
-  for (i = 0U; i < MOTOR_PWM_MOTOR_COUNT; ++i)
+  shared_timer = config->channel[0]->config.timer;
+  for (motor = 0U; motor < MOTOR_PWM_MOTOR_COUNT; ++motor)
   {
-    if ((config->channel[i] != TIM_CHANNEL_1) &&
-        (config->channel[i] != TIM_CHANNEL_2) &&
-        (config->channel[i] != TIM_CHANNEL_3) &&
-        (config->channel[i] != TIM_CHANNEL_4))
+    if ((config->channel[motor] == NULL) ||
+        !config->channel[motor]->initialized ||
+        (config->channel[motor]->config.timer != shared_timer) ||
+        (config->idle_compare[motor] < config->minimum_compare) ||
+        (config->idle_compare[motor] > config->maximum_compare))
     {
       return false;
     }
   }
-
-  return true;
+  return config->maximum_compare < shared_timer->config.period_ticks;
 }
 
-static void MotorPwm_WriteCompare(const MotorPwm_Handle_t *motors,
-                                  uint8_t motor_index,
-                                  uint16_t pulse_us)
+static uint32_t MotorPwm_ThrottleToCompare(const MotorPwm *driver,
+                                           uint8_t motor_index,
+                                           float throttle)
 {
-  __HAL_TIM_SET_COMPARE(motors->config.timer,
-                        motors->config.channel[motor_index],
-                        pulse_us);
-}
+  float mapped;
+  uint32_t compare;
 
-static void MotorPwm_WriteDisarmed(MotorPwm_Handle_t *motors)
-{
-  uint8_t i;
-
-  for (i = 0U; i < MOTOR_PWM_MOTOR_COUNT; ++i)
+  if (throttle <= 0.0f)
   {
-    MotorPwm_WriteCompare(motors, i, motors->config.disarmed_pulse_us);
-    motors->pulse_us[i] = motors->config.disarmed_pulse_us;
+    return driver->config.stop_compare;
   }
+  mapped = (float)driver->config.minimum_compare +
+      throttle * (float)(driver->config.maximum_compare -
+                         driver->config.minimum_compare);
+  compare = (uint32_t)(mapped + 0.5f);
+  if (compare < driver->config.idle_compare[motor_index])
+  {
+    compare = driver->config.idle_compare[motor_index];
+  }
+  return compare;
+}
+
+static MotorStatus MotorPwm_WriteStop(MotorPwm *driver)
+{
+  uint8_t motor;
+  bool write_ok = true;
+
+  for (motor = 0U; motor < MOTOR_PWM_MOTOR_COUNT; ++motor)
+  {
+    if (PwmChannel_SetCompare(driver->config.channel[motor],
+                              driver->config.stop_compare) != PWM_TIMER_OK)
+    {
+      write_ok = false;
+    }
+    driver->requested_throttle[motor] = 0.0f;
+    driver->applied_throttle[motor] = 0.0f;
+    driver->compare[motor] = (uint16_t)driver->config.stop_compare;
+  }
+  return write_ok ? MOTOR_OK : MOTOR_ERROR;
 }

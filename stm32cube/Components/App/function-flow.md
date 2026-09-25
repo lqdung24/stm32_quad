@@ -2,6 +2,17 @@
 
 ## Luồng runtime
 
+### Chế độ bench DShot300 đang bật mặc định
+
+- `APP_DSHOT_TEST_ENABLE=1` trong `Inc/app.h` bật bench, mặc định chọn `APP_MOTOR_OUTPUT_DSHOT300`. Đặt `APP_MOTOR_OUTPUT_PROTOCOL=APP_MOTOR_OUTPUT_DSHOT600` để dùng cùng flow với DShot600. Tháo cánh trước khi cấp nguồn: cả bốn motor tự chạy, không cần ARM.
+- Sau khi `App_Init()` hoàn tất, flight task gọi `AppDshotTest_Step()` mỗi 1 ms: bắt đầu bằng frame 0, tiếp tục gửi 0 trong 15000 ms rồi gửi `0.30f` (DShot value 648) cho M1..M4. Đây là 30% lệnh ga, không phải 30% RPM hay duty tín hiệu DShot.
+- `DroneControl_Init()` nhận motor NULL; flight step bỏ qua UART control/PID/IMU để tránh ghi đè và tránh sensor retry/calibration chặn luồng DShot. Telemetry điều khiển bay không phản ánh output test; xem `app_dshot_test`, `app_motor_driver.throttle_value` và `app_motor_driver.applied_throttle` bằng debugger.
+- DMA BUSY được bỏ qua đến tick sau; lỗi output được chốt vào `app_dshot_test.failed`, gọi Stop và không tự khởi động lại. Ngắt nguồn ESC để dừng test; DISARM/e-stop/watchdog từ web không điều khiển motor trong chế độ này.
+- Tắt test bằng `APP_DSHOT_TEST_ENABLE=0` rồi rebuild/flash; lúc đó mặc định trở về PWM. Đặt thêm `APP_MOTOR_OUTPUT_PROTOCOL=APP_MOTOR_OUTPUT_DSHOT300` hoặc `APP_MOTOR_OUTPUT_DSHOT600` để điều khiển bay bình thường bằng DShot. Cờ cũ `APP_DSHOT600_TEST_ENABLE=0` vẫn tắt bench; `=1` chọn bench DShot600 nếu chưa chọn protocol rõ ràng. Hai cờ bench không được mâu thuẫn.
+- `Inc/app_dshot_test.h` chứa sequencer header-only để không sửa source list do CubeMX sinh. Host regression nằm trong `Tests/motor_output/test_motor_output.c`.
+
+Luồng bên dưới áp dụng khi tắt bench test:
+
 ```text
 CubeMX setup -> App_Set* -> App_Init -> App_Process/AppRtos_Bootstrap
   high-priority 1 ms: App_FlightControlStep
@@ -17,11 +28,11 @@ CubeMX setup -> App_Set* -> App_Init -> App_Process/AppRtos_Bootstrap
 - `App_SetSpi`, `App_SetUsbTransmit`, `App_SetActivityLed`, `App_SetMotorTimer`, `App_SetControlUart` lưu các HAL handle/callback do CubeMX tạo để component dùng sau.
 - `App_OnUsbReceive(data, length)` cố ý bỏ dữ liệu: USB CDC chỉ dành diagnostics, control an toàn chỉ nhận qua USART1 DroneProtocol.
 - `App_OnUsbTransmitComplete()` xóa cờ USB busy để log kế tiếp được gửi.
-- `App_Init()` bật cycle counter; start PWM ở disarmed; init DroneControl; init/calibrate ICM20948, mag và attitude; đặt mọi timestamp/stat; toggle LED khởi động.
-- `App_StartMotorPwm(motors)` init timer PWM, config/start bốn channel; nếu một start lỗi thì stop các channel đã start; attach MotorPWM với 1000..2000 us.
+- `App_Init()` bật cycle counter; tạo motor output đã chọn ở trạng thái stop; init DroneControl; init/calibrate ICM20948, mag và attitude; đặt mọi timestamp/stat; toggle LED khởi động.
+- `App_StartMotorOutput(motors)` lấy đúng timer input clock theo APB/TIMPRE, init một `PwmTimer`, config/start bốn `PwmChannel`, rồi bind `MotorPwm`, `MotorDshot300` hoặc `MotorDshot` theo `APP_MOTOR_OUTPUT_PROTOCOL`; lỗi giữa chừng stop mọi channel đã start.
 - `App_Process()` chuyển quyền sang `AppRtos_Bootstrap`.
 - `App_FlightControlStep(now_ms)` xử lý UART/failsafe trước; retry IMU mỗi giây khi lỗi; poll attitude/gyro mỗi 1 ms; sau rate loop mới đọc mag mỗi 10 ms; tùy compile flag phát log IMU 20 ms.
-- `App_TelemetryStep(now_ms)` theo compile flag phát timing/mixer log theo chu kỳ, rồi drain UART RX debug log.
+- `App_TelemetryStep(now_ms)` theo compile flag phát timing/mixer log theo chu kỳ, log DShot mỗi 500 ms nếu USB rảnh (bitrate, fault, DMA error, raw value, frame count, timer clock), rồi drain UART RX debug log.
 - `App_HousekeepingStep(now_ms)` toggle activity LED mỗi giây.
 - `App_GetTimingStats(stats)` dùng sequence counter chẵn/lẻ và memory barrier để chụp snapshot không rách; đổi cycle sang µs và tính min/mean/max cùng rate milli-Hz.
 - `HAL_UARTEx_RxEventCallback(...)` forward ISR callback vào `DroneControl_OnUartRxEvent`.

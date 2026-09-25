@@ -39,11 +39,12 @@ Components/DroneControl/Src/drone_control.o: \
  ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_pcd.h \
  ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_ll_usb.h \
  ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_pcd_ex.h \
- ../Components/MotorPWM/Inc/motor_pwm.h \
+ ../Components/DroneControl/Inc/../../Motor/Inc/motor.h \
  ../Components/DroneControl/Inc/../../RateControl/Inc/rate_control.h \
  ../Components/DroneProtocol/Inc/dp_cobs.h \
  ../Components/DroneProtocol/Inc/dp_protocol.h \
- ../Components/DroneControl/Src/../../MotorMixer/Inc/motor_mixer.h
+ ../Components/DroneControl/Src/../../MotorMixer/Inc/motor_mixer.h \
+ ../Components/DroneControl/Src/../../Motor/Inc/motor.h
 ../Components/DroneControl/Inc/drone_control.h:
 ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal.h:
 ../Core/Inc/stm32h7xx_hal_conf.h:
@@ -83,8 +84,9 @@ Components/DroneControl/Src/drone_control.o: \
 ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_pcd.h:
 ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_ll_usb.h:
 ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_pcd_ex.h:
-../Components/MotorPWM/Inc/motor_pwm.h:
+../Components/DroneControl/Inc/../../Motor/Inc/motor.h:
 ../Components/DroneControl/Inc/../../RateControl/Inc/rate_control.h:
 ../Components/DroneProtocol/Inc/dp_cobs.h:
 ../Components/DroneProtocol/Inc/dp_protocol.h:
 ../Components/DroneControl/Src/../../MotorMixer/Inc/motor_mixer.h:
+../Components/DroneControl/Src/../../Motor/Inc/motor.h:

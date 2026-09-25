@@ -1,6 +1,8 @@
 Components/MotorPWM/Src/motor_pwm.o: \
  ../Components/MotorPWM/Src/motor_pwm.c \
- ../Components/MotorPWM/Inc/motor_pwm.h \
+ ../Components/MotorPWM/Src/../Inc/motor_pwm.h \
+ ../Components/MotorPWM/Src/../Inc/../../Motor/Inc/motor.h \
+ ../Components/MotorPWM/Src/../Inc/../../PwmTimer/Inc/pwm_timer.h \
  ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal.h \
  ../Core/Inc/stm32h7xx_hal_conf.h \
  ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_rcc.h \
@@ -39,7 +41,9 @@ Components/MotorPWM/Src/motor_pwm.o: \
  ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_pcd.h \
  ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_ll_usb.h \
  ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_pcd_ex.h
-../Components/MotorPWM/Inc/motor_pwm.h:
+../Components/MotorPWM/Src/../Inc/motor_pwm.h:
+../Components/MotorPWM/Src/../Inc/../../Motor/Inc/motor.h:
+../Components/MotorPWM/Src/../Inc/../../PwmTimer/Inc/pwm_timer.h:
 ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal.h:
 ../Core/Inc/stm32h7xx_hal_conf.h:
 ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_rcc.h:

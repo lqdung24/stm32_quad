@@ -9,7 +9,7 @@ ICM20948 SPI raw data
   -> gravity + calibrated mag -> Mahony9 -> Euler telemetry
 ```
 
-`App` composes the HAL handles, starts motor PWM in the disarmed state and schedules the runtime pipeline.
+`App` composes the HAL handles, creates the selected motor output in the stopped state and schedules the runtime pipeline.
 
 ## Frames and calibration
 
@@ -39,8 +39,9 @@ Magnetometer zero vectors and overflow are invalid. The estimator may use `Mahon
 
 ## Motor hardware contract
 
-- TIM3 CH1..CH4 drive M1..M4 at 50 Hz.
-- Disarmed is 1000 µs; software bounds are 1000..2000 µs.
+- TIM3 CH1..CH4 drive M1..M4. Temporary `APP_DSHOT_TEST_ENABLE=1` selects a DShot300 30% bench test (15 s of zero frames first); DShot600 uses the same flow when selected; see `control-safety.md`. With that flag disabled, PWM is the default build at 50 Hz.
+- PWM stop is 1000 µs with bounds 1000..2000 µs.
+- DShot300/600 use the same channels and one TIM3_UP DMA burst. At the current 60 MHz timer clock they use 200/100 ticks per bit, respectively. App derives the period from the actual timer clock. TIM3_UP DMA1 Stream0 and its IRQ are already configured in the current generated source; verify them after CubeMX regeneration.
 - Motor order/direction and calibrated idle floors are documented in `stm32cube/README.md`.
 - STM32, ESP and ESC signal grounds must be common; UART is 3.3 V logic.
 

@@ -34,6 +34,11 @@ Mixer commands use a logical `0..1000` scale. Common collective shifting
 preserves roll/pitch/yaw authority at the actuator limits. Corrections are
 scaled together only if their span exceeds the complete actuator range.
 
+`DroneControl` normalizes the four mixer results to `0.0..1.0` and commits the
+complete bank through `MotorOutput`; it has no dependency on `MotorPwm` or
+`MotorDshot`. PWM-specific idle floors live in the PWM driver. DShot maps a
+positive normalized value to its configured `48..2047` range.
+
 Disarm and armed-zero-throttle remain `1000 us`. The pilot throttle command is
 mapped before mixing: command 1 is `1225 us`, command 100 is about `1339 us`,
 command 250 is about `1512 us`, command 400 is about `1685 us`, and command

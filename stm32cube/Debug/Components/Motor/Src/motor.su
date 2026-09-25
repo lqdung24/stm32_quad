@@ -1,0 +1,13 @@
+../Components/Motor/Src/motor.c:9:13:MotorOutput_Init	24	static
+../Components/Motor/Src/motor.c:31:13:MotorOutput_Start	16	static
+../Components/Motor/Src/motor.c:40:13:MotorOutput_Stop	16	static
+../Components/Motor/Src/motor.c:49:13:MotorOutput_SetThrottle	24	static
+../Components/Motor/Src/motor.c:62:13:MotorOutput_SetAllThrottle	32	static
+../Components/Motor/Src/motor.c:85:13:MotorOutput_Update	16	static
+../Components/Motor/Src/motor.c:94:6:MotorOutput_IsReady	16	static
+../Components/Motor/Src/motor.c:102:6:MotorOutput_IsStarted	16	static
+../Components/Motor/Src/motor.c:108:7:MotorOutput_GetThrottle	16	static
+../Components/Motor/Src/motor.c:119:10:MotorOutput_GetRawOutput	16	static
+../Components/Motor/Src/motor.c:130:15:MotorOutput_GetProtocol	16	static
+../Components/Motor/Src/motor.c:139:13:MotorOutput_OpsValid	16	static
+../Components/Motor/Src/motor.c:148:13:MotorOutput_ThrottleValid	16	static

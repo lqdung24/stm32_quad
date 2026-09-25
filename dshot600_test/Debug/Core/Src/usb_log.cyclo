@@ -1,0 +1,2 @@
+../Core/Src/usb_log.c:15:6:UsbLog_Init	2
+../Core/Src/usb_log.c:37:6:UsbLog_Step	8
