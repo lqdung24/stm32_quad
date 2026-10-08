@@ -7,6 +7,10 @@ extern "C" {
 
 #include <stdbool.h>
 
+/* Flight samples outside this range invalidate the estimator until reinit. */
+#define MAHONY_MIN_DT_S 0.0005f
+#define MAHONY_MAX_DT_S 0.020f
+
 typedef struct
 {
   float kp;
@@ -37,7 +41,9 @@ typedef struct
 } Mahony_Euler_t;
 
 void Mahony_Init(Mahony_Handle_t *filter, const Mahony_Config_t *config);
+/* Gravity in BODY FRD, in g; initialization requires the configured norm gate. */
 bool Mahony_InitFromAccel(Mahony_Handle_t *filter, float ax, float ay, float az);
+/* Gyro is BODY FRD rad/s. Invalid samples clear initialized and return false. */
 bool Mahony_Update(Mahony_Handle_t *filter,
                    float gx_rad_s, float gy_rad_s, float gz_rad_s,
                    float ax, float ay, float az, float dt_s);

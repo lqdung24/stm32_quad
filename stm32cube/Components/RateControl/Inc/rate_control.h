@@ -10,6 +10,10 @@ extern "C" {
 
 #define RATE_CONTROL_AXIS_COUNT 3U
 #define RATE_CONTROL_COMMAND_LIMIT 1000
+/* Outer angle-loop bench settings; rates are BODY FRD, not Euler derivatives. */
+#define RATE_CONTROL_ANGLE_MAX_DEG 30.0f
+#define RATE_CONTROL_ANGLE_KP_PER_S 4.0f
+#define RATE_CONTROL_ANGLE_MAX_RATE_RAD_S 1.745329252f
 
 typedef enum
 {
@@ -59,6 +63,21 @@ void RateControl_SetCommand(RateControl *control,
                             int16_t roll,
                             int16_t pitch,
                             int16_t yaw);
+/* Validate all axes before committing, clamp to configured rate limits. */
+bool RateControl_SetTargetRates(
+    RateControl *control,
+    const float target_rad_s[RATE_CONTROL_AXIS_COUNT]);
+/*
+ * Mahony6 BODY-to-NED roll/pitch in degrees, normalized pilot commands.
+ * Quaternion error creates BODY roll/pitch rates with a joint leveling limit;
+ * yaw remains the pilot's BODY yaw-rate command (no heading hold).
+ */
+bool RateControl_SetAngleCommand(RateControl *control,
+                                 int16_t roll,
+                                 int16_t pitch,
+                                 int16_t yaw,
+                                 float measured_roll_deg,
+                                 float measured_pitch_deg);
 bool RateControl_Update(RateControl *control,
                         const float measured_rad_s[RATE_CONTROL_AXIS_COUNT],
                         float dt_s);

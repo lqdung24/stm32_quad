@@ -286,6 +286,17 @@ static void test_dshot_driver(uint32_t bitrate_hz,
     const uint32_t boot_ms = UINT32_MAX - 1000U;
     AppDshotTest_Step(&test, &output, boot_ms);
     assert(test.started && !test.failed);
+    previous_dma_start_count = dma_start_count;
+    AppDshotTest_Step(&test, &output, boot_ms);
+    AppDshotTest_Step(&test, &output, boot_ms + 1U);
+    assert(dma_start_count == previous_dma_start_count);
+    for (slot = 2U; slot <= 1000U; ++slot)
+    {
+      AppDshotTest_Step(&test, &output, boot_ms + slot);
+      AppDshotTest_Step(&test, &output, boot_ms + slot);
+      assert(dma_start_count == previous_dma_start_count + slot / 2U);
+    }
+    assert(test.frames_completed == 500U);
     AppDshotTest_Step(&test, &output, boot_ms + 14999U);
     for (motor = 0U; motor < MOTOR_DSHOT_MOTOR_COUNT; ++motor)
     {
@@ -294,10 +305,11 @@ static void test_dshot_driver(uint32_t bitrate_hz,
     service_status = PWM_TIMER_BUSY;
     previous_dma_start_count = dma_start_count;
     AppDshotTest_Step(&test, &output, boot_ms + 15000U);
+    AppDshotTest_Step(&test, &output, boot_ms + 15001U);
     assert(!test.failed);
     assert(dma_start_count == previous_dma_start_count);
     service_status = PWM_TIMER_OK;
-    AppDshotTest_Step(&test, &output, boot_ms + 15001U);
+    AppDshotTest_Step(&test, &output, boot_ms + 15002U);
     for (motor = 0U; motor < MOTOR_DSHOT_MOTOR_COUNT; ++motor)
     {
       assert(MotorOutput_GetRawOutput(&output, motor) == 648U);
@@ -306,7 +318,9 @@ static void test_dshot_driver(uint32_t bitrate_hz,
                             expected_packet(648U, 0), zero_ticks, one_ticks);
     }
     service_status = PWM_TIMER_HAL_ERROR;
-    AppDshotTest_Step(&test, &output, boot_ms + 15002U);
+    AppDshotTest_Step(&test, &output, boot_ms + 15003U);
+    assert(!test.failed); /* One ms since success: no frame due yet. */
+    AppDshotTest_Step(&test, &output, boot_ms + 15004U);
     assert(test.failed);
     assert(!MotorOutput_IsStarted(&output));
     for (motor = 0U; motor < MOTOR_DSHOT_MOTOR_COUNT; ++motor)

@@ -7,12 +7,20 @@
 #define MAHONY_MIN_VECTOR_NORM 0.000001f
 
 static float Mahony_Clamp(float value, float minimum, float maximum);
+static bool Mahony_ConfigValid(const Mahony_Config_t *config);
+static bool Mahony_StateValid(const Mahony_Handle_t *filter);
 
 void Mahony_Init(Mahony_Handle_t *filter, const Mahony_Config_t *config)
 {
-  if ((filter == NULL) || (config == NULL))
+  Mahony_Config_t validated_config = {0};
+
+  if (filter == NULL)
   {
     return;
+  }
+  if (Mahony_ConfigValid(config))
+  {
+    validated_config = *config;
   }
 
   filter->q0 = 1.0f;
@@ -22,7 +30,7 @@ void Mahony_Init(Mahony_Handle_t *filter, const Mahony_Config_t *config)
   filter->integral_x = 0.0f;
   filter->integral_y = 0.0f;
   filter->integral_z = 0.0f;
-  filter->config = *config;
+  filter->config = validated_config;
   filter->initialized = false;
 }
 
@@ -43,8 +51,17 @@ bool Mahony_InitFromAccel(Mahony_Handle_t *filter, float ax, float ay, float az)
     return false;
   }
 
+  filter->initialized = false;
+  if (!Mahony_ConfigValid(&filter->config) ||
+      !isfinite(ax) || !isfinite(ay) || !isfinite(az))
+  {
+    return false;
+  }
+
   norm = sqrtf((ax * ax) + (ay * ay) + (az * az));
-  if (norm < MAHONY_MIN_VECTOR_NORM)
+  if (!isfinite(norm) || (norm < MAHONY_MIN_VECTOR_NORM) ||
+      (norm <= filter->config.accel_min_norm) ||
+      (norm >= filter->config.accel_max_norm))
   {
     return false;
   }
@@ -90,13 +107,27 @@ bool Mahony_Update(Mahony_Handle_t *filter,
   float q2;
   float q3;
 
-  if ((filter == NULL) || (!filter->initialized) || (dt_s <= 0.0f))
+  if (filter == NULL)
   {
+    return false;
+  }
+  if (!Mahony_StateValid(filter) || !isfinite(dt_s) ||
+      (dt_s < MAHONY_MIN_DT_S) || (dt_s > MAHONY_MAX_DT_S) ||
+      !isfinite(gx_rad_s) || !isfinite(gy_rad_s) || !isfinite(gz_rad_s) ||
+      !isfinite(ax) || !isfinite(ay) || !isfinite(az))
+  {
+    filter->initialized = false;
     return false;
   }
 
   accel_norm = sqrtf((ax * ax) + (ay * ay) + (az * az));
-  if ((accel_norm > filter->config.accel_min_norm) &&
+  if (!isfinite(accel_norm))
+  {
+    filter->initialized = false;
+    return false;
+  }
+  if ((accel_norm > MAHONY_MIN_VECTOR_NORM) &&
+      (accel_norm > filter->config.accel_min_norm) &&
       (accel_norm < filter->config.accel_max_norm))
   {
     ax /= accel_norm;
@@ -138,7 +169,8 @@ bool Mahony_Update(Mahony_Handle_t *filter,
 
   quaternion_norm = sqrtf((filter->q0 * filter->q0) + (filter->q1 * filter->q1) +
                           (filter->q2 * filter->q2) + (filter->q3 * filter->q3));
-  if (quaternion_norm < MAHONY_MIN_VECTOR_NORM)
+  if (!isfinite(quaternion_norm) ||
+      (quaternion_norm < MAHONY_MIN_VECTOR_NORM))
   {
     filter->initialized = false;
     return false;
@@ -155,24 +187,60 @@ bool Mahony_Update(Mahony_Handle_t *filter,
 bool Mahony_GetEulerDegrees(const Mahony_Handle_t *filter, Mahony_Euler_t *euler)
 {
   float sin_pitch;
+  Mahony_Euler_t result;
 
-  if ((filter == NULL) || (euler == NULL) || (!filter->initialized))
+  if ((euler == NULL) || !Mahony_StateValid(filter))
   {
     return false;
   }
 
-  euler->roll = atan2f(2.0f * ((filter->q0 * filter->q1) + (filter->q2 * filter->q3)),
+  result.roll = atan2f(2.0f * ((filter->q0 * filter->q1) + (filter->q2 * filter->q3)),
                        1.0f - (2.0f * ((filter->q1 * filter->q1) + (filter->q2 * filter->q2)))) *
                 MAHONY_RAD_TO_DEG;
 
   sin_pitch = 2.0f * ((filter->q0 * filter->q2) - (filter->q3 * filter->q1));
-  euler->pitch = asinf(Mahony_Clamp(sin_pitch, -1.0f, 1.0f)) * MAHONY_RAD_TO_DEG;
+  result.pitch = asinf(Mahony_Clamp(sin_pitch, -1.0f, 1.0f)) * MAHONY_RAD_TO_DEG;
 
-  euler->yaw = atan2f(2.0f * ((filter->q0 * filter->q3) + (filter->q1 * filter->q2)),
+  result.yaw = atan2f(2.0f * ((filter->q0 * filter->q3) + (filter->q1 * filter->q2)),
                       1.0f - (2.0f * ((filter->q2 * filter->q2) + (filter->q3 * filter->q3)))) *
                MAHONY_RAD_TO_DEG;
 
+  if (!isfinite(result.roll) || !isfinite(result.pitch) || !isfinite(result.yaw))
+  {
+    return false;
+  }
+  *euler = result;
   return true;
+}
+
+static bool Mahony_ConfigValid(const Mahony_Config_t *config)
+{
+  return (config != NULL) &&
+         isfinite(config->kp) && (config->kp >= 0.0f) &&
+         isfinite(config->ki) && (config->ki >= 0.0f) &&
+         isfinite(config->integral_limit_rad_s) &&
+         (config->integral_limit_rad_s >= 0.0f) &&
+         isfinite(config->accel_min_norm) && (config->accel_min_norm >= 0.0f) &&
+         isfinite(config->accel_max_norm) &&
+         (config->accel_max_norm > MAHONY_MIN_VECTOR_NORM) &&
+         (config->accel_max_norm > config->accel_min_norm);
+}
+
+static bool Mahony_StateValid(const Mahony_Handle_t *filter)
+{
+  float norm_squared;
+
+  if ((filter == NULL) || !filter->initialized ||
+      !Mahony_ConfigValid(&filter->config) ||
+      !isfinite(filter->integral_x) || !isfinite(filter->integral_y) ||
+      !isfinite(filter->integral_z))
+  {
+    return false;
+  }
+  norm_squared = (filter->q0 * filter->q0) + (filter->q1 * filter->q1) +
+                 (filter->q2 * filter->q2) + (filter->q3 * filter->q3);
+  /* Successful initialization and integration always produce a unit quaternion. */
+  return isfinite(norm_squared) && (fabsf(norm_squared - 1.0f) <= 0.001f);
 }
 
 static float Mahony_Clamp(float value, float minimum, float maximum)

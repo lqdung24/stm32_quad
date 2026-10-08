@@ -116,7 +116,11 @@ DroneProtocolResult DroneProtocol_EncodeControl(
     {
         return DRONE_PROTOCOL_NULL_ARGUMENT;
     }
-    if ((command->header.flags & ~DRONE_CONTROL_FLAG_ALLOWED_MASK) != 0U)
+    if (((command->header.flags & ~DRONE_CONTROL_FLAG_ALLOWED_MASK) != 0U) ||
+        ((command->header.flags & DRONE_CONTROL_FLAG_MODE_MASK) ==
+         DRONE_CONTROL_FLAG_MODE_MASK) ||
+        (((command->header.flags & DRONE_CONTROL_FLAG_MOTOR_TEST) != 0U) &&
+         ((command->header.flags & DRONE_CONTROL_FLAG_MODE_MASK) != 0U)))
     {
         return DRONE_PROTOCOL_FLAGS_ERROR;
     }
@@ -125,7 +129,12 @@ DroneProtocolResult DroneProtocol_EncodeControl(
         (command->pitch < -1000) || (command->pitch > 1000) ||
         (command->yaw < -1000) || (command->yaw > 1000) ||
         (command->aux1 > DRONE_CONTROL_MOTOR_SELECT_MAX) ||
-        (command->aux2 != 0U))
+        (command->aux2 != 0U) ||
+        (((command->header.flags & DRONE_CONTROL_FLAG_MOTOR_TEST) != 0U) &&
+         ((command->roll != 0) || (command->pitch != 0) ||
+          (command->yaw != 0))) ||
+        (((command->header.flags & DRONE_CONTROL_FLAG_MOTOR_TEST) == 0U) &&
+         (command->aux1 != DRONE_CONTROL_MOTOR_SELECT_ALL)))
     {
         return DRONE_PROTOCOL_RANGE_ERROR;
     }
@@ -164,7 +173,11 @@ DroneProtocolResult DroneProtocol_DecodeControl(
     {
         return result;
     }
-    if ((command->header.flags & ~DRONE_CONTROL_FLAG_ALLOWED_MASK) != 0U)
+    if (((command->header.flags & ~DRONE_CONTROL_FLAG_ALLOWED_MASK) != 0U) ||
+        ((command->header.flags & DRONE_CONTROL_FLAG_MODE_MASK) ==
+         DRONE_CONTROL_FLAG_MODE_MASK) ||
+        (((command->header.flags & DRONE_CONTROL_FLAG_MOTOR_TEST) != 0U) &&
+         ((command->header.flags & DRONE_CONTROL_FLAG_MODE_MASK) != 0U)))
     {
         return DRONE_PROTOCOL_FLAGS_ERROR;
     }
@@ -180,7 +193,12 @@ DroneProtocolResult DroneProtocol_DecodeControl(
         (command->pitch < -1000) || (command->pitch > 1000) ||
         (command->yaw < -1000) || (command->yaw > 1000) ||
         (command->aux1 > DRONE_CONTROL_MOTOR_SELECT_MAX) ||
-        (command->aux2 != 0U))
+        (command->aux2 != 0U) ||
+        (((command->header.flags & DRONE_CONTROL_FLAG_MOTOR_TEST) != 0U) &&
+         ((command->roll != 0) || (command->pitch != 0) ||
+          (command->yaw != 0))) ||
+        (((command->header.flags & DRONE_CONTROL_FLAG_MOTOR_TEST) == 0U) &&
+         (command->aux1 != DRONE_CONTROL_MOTOR_SELECT_ALL)))
     {
         return DRONE_PROTOCOL_RANGE_ERROR;
     }
@@ -297,7 +315,7 @@ DroneProtocolResult DroneProtocol_EncodeFlightTelemetry(
 
     memset(output, 0, DRONE_FLIGHT_TELEMETRY_PACKET_SIZE);
     header = telemetry->header;
-    header.type = DRONE_PACKET_FLIGHT_TELEMETRY;
+    header.type = DRONE_PACKET_FLIGHT_TELEMETRY_SYNC;
     header.flags = (uint16_t)(telemetry->state &
                               DRONE_FLIGHT_TELEMETRY_FLAG_STATE_MASK);
     if (telemetry->actuators_active)
@@ -307,6 +325,10 @@ DroneProtocolResult DroneProtocol_EncodeFlightTelemetry(
     if (telemetry->attitude_valid)
     {
         header.flags |= DRONE_FLIGHT_TELEMETRY_FLAG_ATTITUDE_VALID;
+    }
+    if (telemetry->output_sample_matched)
+    {
+        header.flags |= DRONE_FLIGHT_TELEMETRY_FLAG_OUTPUT_SAMPLE_MATCHED;
     }
     header.payload_length = DRONE_FLIGHT_TELEMETRY_PAYLOAD_SIZE;
     encode_header(&header, output);
@@ -327,6 +349,8 @@ DroneProtocolResult DroneProtocol_EncodeFlightTelemetry(
         DroneProtocol_WriteU16Le(output + 40U + (2U * motor),
                                  telemetry->motor_pwm_us[motor]);
     }
+    DroneProtocol_WriteU32Le(output + 48U, telemetry->sample_id);
+    DroneProtocol_WriteU32Le(output + 52U, telemetry->motor_commit_time_ms);
     append_crc(output, DRONE_FLIGHT_TELEMETRY_PACKET_SIZE);
     return DRONE_PROTOCOL_OK;
 }
@@ -339,21 +363,25 @@ DroneProtocolResult DroneProtocol_DecodeFlightTelemetry(
     DroneProtocolResult result;
     uint8_t axis;
     uint8_t motor;
+    const bool legacy = packet_length == DRONE_FLIGHT_TELEMETRY_LEGACY_PACKET_SIZE;
 
     if (telemetry == NULL)
     {
         return DRONE_PROTOCOL_NULL_ARGUMENT;
     }
     result = decode_header(packet, packet_length,
-                           DRONE_PACKET_FLIGHT_TELEMETRY,
-                           DRONE_FLIGHT_TELEMETRY_PAYLOAD_SIZE,
+                           legacy ? DRONE_PACKET_FLIGHT_TELEMETRY :
+                                    DRONE_PACKET_FLIGHT_TELEMETRY_SYNC,
+                           legacy ? DRONE_FLIGHT_TELEMETRY_LEGACY_PAYLOAD_SIZE :
+                                    DRONE_FLIGHT_TELEMETRY_PAYLOAD_SIZE,
                            &telemetry->header);
     if (result != DRONE_PROTOCOL_OK)
     {
         return result;
     }
     if ((telemetry->header.flags &
-         ~DRONE_FLIGHT_TELEMETRY_FLAG_ALLOWED_MASK) != 0U)
+         ~(legacy ? DRONE_FLIGHT_TELEMETRY_FLAG_LEGACY_ALLOWED_MASK :
+                    DRONE_FLIGHT_TELEMETRY_FLAG_ALLOWED_MASK)) != 0U)
     {
         return DRONE_PROTOCOL_FLAGS_ERROR;
     }
@@ -366,6 +394,11 @@ DroneProtocolResult DroneProtocol_DecodeFlightTelemetry(
     telemetry->attitude_valid =
         (telemetry->header.flags &
          DRONE_FLIGHT_TELEMETRY_FLAG_ATTITUDE_VALID) != 0U;
+    telemetry->sample_id = legacy ? 0U : DroneProtocol_ReadU32Le(packet + 48U);
+    telemetry->motor_commit_time_ms = legacy ? 0U : DroneProtocol_ReadU32Le(packet + 52U);
+    telemetry->output_sample_matched = !legacy &&
+        (telemetry->header.flags &
+         DRONE_FLIGHT_TELEMETRY_FLAG_OUTPUT_SAMPLE_MATCHED) != 0U;
     if (telemetry->state > DRONE_STATE_ERROR)
     {
         return DRONE_PROTOCOL_RANGE_ERROR;

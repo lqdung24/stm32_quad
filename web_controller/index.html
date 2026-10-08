@@ -21,7 +21,7 @@
   <header class="topbar">
     <div class="brand">
       <h1>Drone Controller</h1>
-      <p class="sub">Rate control · Quad-X · USB Serial + ESP-NOW</p>
+      <p class="sub">Angle / Acro · Quad-X · USB Serial + ESP-NOW</p>
     </div>
     <div class="top-actions">
       <button id="mode-toggle">MỞ JOYSTICK</button>
@@ -48,6 +48,14 @@
 
     <section id="status-panel" class="panel">
       <div id="mode-badge" class="mode-badge">TEST MOTOR</div>
+      <div id="flight-options" class="flight-options" hidden>
+        <label for="flight-mode">Chế độ bay</label>
+        <select id="flight-mode">
+          <option value="angle" selected>ANGLE · Tự cân bằng</option>
+          <option value="acro">ACRO · Tốc độ góc</option>
+        </select>
+        <p id="flight-mode-hint" class="hint"></p>
+      </div>
       <div class="status-list">
         <div class="status-row"><span>USB → Ground ESP</span><span data-status="ws" class="status-value bad"><i class="dot"></i>DISCONNECTED</span></div>
         <div class="status-row"><span>ESP-NOW Ground ↔ Air</span><span data-status="esp" class="status-value bad"><i class="dot"></i>OFFLINE</span></div>
@@ -82,7 +90,7 @@
       <div class="actions">
         <button class="arm" data-action="arm">ARM</button>
         <button class="disarm" data-action="disarm">DISARM</button>
-        <button class="stop" data-action="stop">DỪNG KHẨN CẤP</button>
+        <button class="stop" data-action="stop" aria-keyshortcuts="Escape">DỪNG KHẨN CẤP · Esc</button>
       </div>
     </section>
 
@@ -104,7 +112,7 @@
       <span id="throttle-label">Throttle chung 4 motor</span>
       <output id="requested">0 / 500</output>
       <input id="slider" type="range" min="0" max="500" step="5" value="0" disabled>
-      <p class="hint">Dead-man: phải giữ tay trên slider; thả tay sẽ về 0 ngay.</p>
+      <p class="hint">Điều khiển mức quay trực tiếp, không dùng PID. Giữ tay trên slider; thả tay sẽ về 0 ngay. Tháo cánh quạt trước khi thử.</p>
       <div class="motors">
         <div class="motor selected" data-motor="1">M1 · FL<strong class="motor-pwm">1000 µs</strong></div>
         <div class="motor selected" data-motor="2">M2 · RL<strong class="motor-pwm">1000 µs</strong></div>

@@ -88,7 +88,7 @@ Battery - ───────────── ESC Power -
 Ba dây pha ESC ──────── Motor
 ```
 
-PWM hiện được cấu hình:
+Khi chọn giao thức PWM, cấu hình là:
 
 - Tần số: `50 Hz`
 - Disarm/throttle 0: `1000 µs`
@@ -116,22 +116,33 @@ MotorOutput_SetAllThrottle(&motors, throttle, 4U);
 MotorOutput_Update(&motors);
 ```
 
-Cấu hình hiện tại bật bench DShot300: `APP_DSHOT_TEST_ENABLE=1`, gửi giá trị
-`0` trong 15 giây rồi gửi ga `0.30f` (DShot value 648) cho cả bốn motor mỗi
-1 ms. Flow DShot600 giống hệt khi chọn `APP_MOTOR_OUTPUT_DSHOT600`.
-Bench tự chạy, bỏ qua ARM/DISARM, e-stop và watchdog điều khiển; tháo cánh
-và ngắt nguồn ESC để dừng test.
+Cấu hình hiện tại dùng DShot300 trong flow điều khiển bình thường:
+`APP_DSHOT_TEST_ENABLE=0`. Motor khởi động ở trạng thái dừng và đi qua
+ARM/DISARM, e-stop, watchdog, PID và mixer; không tự chạy ga sau 15 giây.
+
+DShot300/600 cập nhật lệnh ESC ở **500 Hz (mỗi 2 ms)**; IMU/PID vẫn chạy
+theo mẫu mới trong task 1 ms. UART và PID stage lệnh mới nhất; bước output
+sau IMU/PID gửi đồng bộ bốn ESC, kể cả zero-throttle và MOTOR_TEST không có
+packet mới. Pre-arm và bench cũng dùng 2 ms. DISARM/e-stop/failsafe dừng ngay,
+không chờ chu kỳ gửi. DMA BUSY retry tick sau; deadline trễ không burst bù.
+Đây là nhịp lệnh, bitrate DShot300/600 và PWM 50 Hz giữ nguyên. Đo nhịp frame
+trên chân ESC khi bench không cánh để xác nhận timing thực tế.
 
 Chọn giao thức trong `Components/App/Inc/app.h` hoặc build defines:
 
 ```c
+#define APP_DSHOT_TEST_ENABLE 0U
 #define APP_MOTOR_OUTPUT_PROTOCOL APP_MOTOR_OUTPUT_DSHOT300
-/* Hoặc APP_MOTOR_OUTPUT_DSHOT600 */
+/* Hoặc APP_MOTOR_OUTPUT_DSHOT600 / APP_MOTOR_OUTPUT_PWM */
 ```
 
-Để dùng điều khiển bay bình thường, đặt `APP_DSHOT_TEST_ENABLE=0`; nếu không
-chọn protocol rõ ràng thì dùng PWM 50 Hz. Cờ cũ `APP_DSHOT600_TEST_ENABLE=0`
-vẫn tắt bench; `=1` chọn bench DShot600 khi không có protocol override.
+Khi cần test giao thức riêng, chủ động đặt `APP_DSHOT_TEST_ENABLE=1`: gửi
+giá trị `0` trong 15 giây rồi gửi ga `0.30f` (DShot value 648) cho cả bốn
+motor mỗi 2 ms (500 Hz); flight task vẫn chạy mỗi 1 ms. Flow DShot600 giống hệt khi chọn `APP_MOTOR_OUTPUT_DSHOT600`.
+Bench tự chạy, bỏ qua ARM/DISARM, e-stop và watchdog điều khiển; tháo cánh
+và ngắt nguồn ESC để dừng test. Tắt test vẫn giữ DShot300 mặc định.
+Cờ cũ `APP_DSHOT600_TEST_ENABLE=0` vẫn tắt bench; `=1` chọn bench DShot600
+khi không có protocol override.
 
 `Components/MotorDshot300` dùng chung encoder/DMA với `MotorDshot`; adapter
 header-only không cần thêm source vào makefile CubeMX. TIM3_UP DMA1 Stream0

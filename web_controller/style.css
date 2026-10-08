@@ -49,6 +49,12 @@ h1 { margin:0; font-size:clamp(1rem,2.8vw,1.35rem); line-height:1.1; }
   border-radius:99px; color:#bde7ff; background:#102b3e; font-size:.7rem; font-weight:900;
 }
 .status-list { display:grid; gap:3px; }
+.flight-options { display:grid; gap:5px; font-size:.75rem; color:var(--muted); }
+.flight-options select {
+  width:100%; min-height:38px; padding:5px 8px; color:var(--text);
+  border:1px solid #3b4d60; border-radius:8px; background:#0e1823;
+}
+.flight-options .hint { margin:0; }
 .status-row {
   display:flex; align-items:center; justify-content:space-between; gap:8px;
   min-height:25px; padding:2px 5px; border-bottom:1px solid #263849; font-size:.79rem;

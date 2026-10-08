@@ -14,30 +14,37 @@ extern "C"
 #define DRONE_PROTOCOL_VERSION 1U
 #define DRONE_PROTOCOL_HEADER_SIZE 16U
 #define DRONE_PROTOCOL_CRC_SIZE 2U
-#define DRONE_PROTOCOL_MAX_PAYLOAD_SIZE 32U
-#define DRONE_PROTOCOL_MAX_PACKET_SIZE 50U
+#define DRONE_PROTOCOL_MAX_PAYLOAD_SIZE 40U
+#define DRONE_PROTOCOL_MAX_PACKET_SIZE 58U
 #define DRONE_CONTROL_PAYLOAD_SIZE 12U
 #define DRONE_CONTROL_PACKET_SIZE 30U
 #define DRONE_STATUS_PAYLOAD_SIZE 20U
 #define DRONE_STATUS_PACKET_SIZE 38U
-#define DRONE_FLIGHT_TELEMETRY_PAYLOAD_SIZE 32U
-#define DRONE_FLIGHT_TELEMETRY_PACKET_SIZE 50U
+#define DRONE_FLIGHT_TELEMETRY_LEGACY_PAYLOAD_SIZE 32U
+#define DRONE_FLIGHT_TELEMETRY_LEGACY_PACKET_SIZE 50U
+#define DRONE_FLIGHT_TELEMETRY_PAYLOAD_SIZE 40U
+#define DRONE_FLIGHT_TELEMETRY_PACKET_SIZE 58U
 #define DRONE_PROTOCOL_MOTOR_COUNT 4U
 
 #define DRONE_CONTROL_FLAG_ARM_REQUEST (1U << 0)
 #define DRONE_CONTROL_FLAG_EMERGENCY_STOP (1U << 1)
 #define DRONE_CONTROL_FLAG_ANGLE_MODE (1U << 2)
 #define DRONE_CONTROL_FLAG_ACRO_MODE (1U << 3)
+/* ANGLE and ACRO are mutually exclusive; neither preserves legacy ACRO. */
+#define DRONE_CONTROL_FLAG_MODE_MASK (DRONE_CONTROL_FLAG_ANGLE_MODE | DRONE_CONTROL_FLAG_ACRO_MODE)
 #define DRONE_CONTROL_FLAG_FAILSAFE_TEST (1U << 4)
-#define DRONE_CONTROL_FLAG_ALLOWED_MASK 0x001FU
+#define DRONE_CONTROL_FLAG_MOTOR_TEST (1U << 5)
+#define DRONE_CONTROL_FLAG_ALLOWED_MASK 0x003FU
 
 /* Flight telemetry flags live in the packet header, not in its payload. */
 #define DRONE_FLIGHT_TELEMETRY_FLAG_STATE_MASK 0x0007U
 #define DRONE_FLIGHT_TELEMETRY_FLAG_ACTUATORS_ACTIVE (1U << 3)
 #define DRONE_FLIGHT_TELEMETRY_FLAG_ATTITUDE_VALID (1U << 4)
-#define DRONE_FLIGHT_TELEMETRY_FLAG_ALLOWED_MASK 0x001FU
+#define DRONE_FLIGHT_TELEMETRY_FLAG_OUTPUT_SAMPLE_MATCHED (1U << 5)
+#define DRONE_FLIGHT_TELEMETRY_FLAG_LEGACY_ALLOWED_MASK 0x001FU
+#define DRONE_FLIGHT_TELEMETRY_FLAG_ALLOWED_MASK 0x003FU
 
-/* AUX1 motor selection used only by the no-prop threshold-test mode. */
+/* AUX1 selects the motor only when MOTOR_TEST is set. */
 #define DRONE_CONTROL_MOTOR_SELECT_ALL 0U
 #define DRONE_CONTROL_MOTOR_SELECT_M1 1U
 #define DRONE_CONTROL_MOTOR_SELECT_M2 2U
@@ -64,7 +71,8 @@ extern "C"
         DRONE_PACKET_CONFIG_REQUEST = 0x04,
         DRONE_PACKET_CONFIG_RESPONSE = 0x05,
         DRONE_PACKET_ERROR_REPORT = 0x06,
-        DRONE_PACKET_FLIGHT_TELEMETRY = 0x07
+        DRONE_PACKET_FLIGHT_TELEMETRY = 0x07,
+        DRONE_PACKET_FLIGHT_TELEMETRY_SYNC = 0x08
     } DronePacketType;
 
     typedef enum
@@ -127,7 +135,10 @@ extern "C"
     /*
      * Packed payload layout (all values are little-endian):
      * attitude_cdeg[3], gyro_mrad_s[3], rate_setpoint_mrad_s[3],
-     * pid_command_centi[3], motor_pwm_us[4].
+     * pid_command_centi[3], motor_pwm_us[4], sample_id, motor_commit_time_ms.
+     * Type 0x08 adds the two uint32 fields to legacy type 0x07.
+     * header.sender_time_ms is the IMU sample time, not the TX time.
+     * Commit time is successful driver submission, not DMA completion/RPM.
      * The state and validity bits are carried in header.flags.
      */
     typedef struct
@@ -138,9 +149,12 @@ extern "C"
         int16_t rate_setpoint_mrad_s[3];
         int16_t pid_command_centi[3];
         uint16_t motor_pwm_us[DRONE_PROTOCOL_MOTOR_COUNT];
+        uint32_t sample_id;
+        uint32_t motor_commit_time_ms;
         uint8_t state;
         bool actuators_active;
         bool attitude_valid;
+        bool output_sample_matched;
     } DroneFlightTelemetry;
 
     uint16_t DroneProtocol_Crc16CcittFalse(const uint8_t *data, size_t length);

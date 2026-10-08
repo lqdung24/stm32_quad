@@ -3,9 +3,9 @@
 ../Components/DroneProtocol/Src/dp_protocol.c:77:13:append_crc	24	static
 ../Components/DroneProtocol/Src/dp_protocol.c:85:10:DroneProtocol_Crc16CcittFalse	32	static
 ../Components/DroneProtocol/Src/dp_protocol.c:109:21:DroneProtocol_EncodeControl	40	static
-../Components/DroneProtocol/Src/dp_protocol.c:148:21:DroneProtocol_DecodeControl	40	static
-../Components/DroneProtocol/Src/dp_protocol.c:190:21:DroneProtocol_EncodeStatus	40	static
-../Components/DroneProtocol/Src/dp_protocol.c:228:21:DroneProtocol_DecodeStatus	40	static
-../Components/DroneProtocol/Src/dp_protocol.c:271:21:DroneProtocol_EncodeFlightTelemetry	48	static
-../Components/DroneProtocol/Src/dp_protocol.c:334:21:DroneProtocol_DecodeFlightTelemetry	48	static
-../Components/DroneProtocol/Src/dp_protocol.c:397:6:DroneProtocol_IsSequenceNewer	16	static
+../Components/DroneProtocol/Src/dp_protocol.c:157:21:DroneProtocol_DecodeControl	40	static
+../Components/DroneProtocol/Src/dp_protocol.c:208:21:DroneProtocol_EncodeStatus	40	static
+../Components/DroneProtocol/Src/dp_protocol.c:246:21:DroneProtocol_DecodeStatus	40	static
+../Components/DroneProtocol/Src/dp_protocol.c:289:21:DroneProtocol_EncodeFlightTelemetry	48	static
+../Components/DroneProtocol/Src/dp_protocol.c:358:21:DroneProtocol_DecodeFlightTelemetry	48	static
+../Components/DroneProtocol/Src/dp_protocol.c:430:6:DroneProtocol_IsSequenceNewer	16	static

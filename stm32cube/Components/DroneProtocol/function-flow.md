@@ -28,12 +28,14 @@ raw packet <-> COBS frame + delimiter 0x00 (ở tầng transport)
 - `decode_header(packet, length, required_type, required_payload_length, header)` kiểm tra null, exact size, magic, version, type, payload length, reserved và CRC trước khi populate header.
 - `append_crc(packet, packet_length)` tính CRC trên mọi byte trừ hai byte cuối rồi ghi CRC little-endian.
 - `DroneProtocol_Crc16CcittFalse(data, length)` chạy CRC-16/CCITT-FALSE với init `0xFFFF`, polynomial `0x1021`; null chỉ hợp lệ khi length=0.
-- `DroneProtocol_EncodeControl(command, output)` validate flags, throttle/axes/aux; chuẩn hóa header type/length, ghi payload control và CRC.
-- `DroneProtocol_DecodeControl(packet, length, command)` validate header/CRC, flags, đọc payload rồi kiểm tra range một lần nữa.
+- `DroneProtocol_EncodeControl(command, output)` validate flags (ANGLE/ACRO/MOTOR_TEST loại trừ nhau), throttle/axes/aux; chuẩn hóa header type/length, ghi payload control và CRC.
+- `DroneProtocol_DecodeControl(packet, length, command)` validate header/CRC, flags (ANGLE/ACRO/MOTOR_TEST loại trừ nhau), đọc payload rồi kiểm tra range một lần nữa.
 - `DroneProtocol_EncodeStatus(status, output)` validate throttle/state, ép status flags=0, ghi sequence ACK, PWM, state, error và UART rate, đặt reserved rồi CRC.
 - `DroneProtocol_DecodeStatus(packet, length, status)` validate header/CRC/reserved, đọc payload và range-check throttle/state.
-- `DroneProtocol_EncodeFlightTelemetry(telemetry, output)` validate state/flags/PWM; dựng flags từ state, actuator và attitude validity; ghi 3 trục attitude/gyro/setpoint/PID, 4 PWM và CRC.
-- `DroneProtocol_DecodeFlightTelemetry(packet, length, telemetry)` validate header/flags/state; giải scale-field dạng integer và kiểm tra từng PWM 1000..2000 us.
+- `DroneProtocol_EncodeFlightTelemetry(telemetry, output)` validate state/flags/PWM; dựng flags từ state, actuator và attitude validity; ghi type 8 (58 byte), 3 trục attitude/gyro/setpoint/PID, 4 PWM, uint32 sample_id + motor_commit_time_ms và CRC; bit 5 đánh dấu output_sample_matched.
+- `DroneProtocol_DecodeFlightTelemetry(packet, length, telemetry)` chấp nhận type 8/58 byte hoặc legacy type 7/50 byte, kiểm tra flag mask riêng; legacy trả ID/time=0 và matched=false; giải scale-field dạng integer và kiểm tra từng PWM 1000..2000 us.
 - `DroneProtocol_IsSequenceNewer(candidate, reference)` so sánh sequence 16-bit có wrap-around: khác nhau và khoảng tiến nhỏ hơn nửa không gian `0x8000`.
 
 Mọi decoder trả mã lỗi phân biệt null, size, magic, version, type, length, reserved, CRC, flags và range; caller không nên gộp bỏ thông tin này nếu cần telemetry lỗi chi tiết.
+
+`MOTOR_TEST` dùng header bit 5; chỉ mode này chấp nhận AUX1=1..4 và bắt buộc ba trục bằng 0. Ngoài mode test, AUX1 phải bằng 0. AUX2 luôn bằng 0.

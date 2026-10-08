@@ -2,13 +2,18 @@
 
 ## Luồng runtime
 
-### Chế độ bench DShot300 đang bật mặc định
+### Cấu hình mặc định: điều khiển bình thường bằng DShot300
 
-- `APP_DSHOT_TEST_ENABLE=1` trong `Inc/app.h` bật bench, mặc định chọn `APP_MOTOR_OUTPUT_DSHOT300`. Đặt `APP_MOTOR_OUTPUT_PROTOCOL=APP_MOTOR_OUTPUT_DSHOT600` để dùng cùng flow với DShot600. Tháo cánh trước khi cấp nguồn: cả bốn motor tự chạy, không cần ARM.
-- Sau khi `App_Init()` hoàn tất, flight task gọi `AppDshotTest_Step()` mỗi 1 ms: bắt đầu bằng frame 0, tiếp tục gửi 0 trong 15000 ms rồi gửi `0.30f` (DShot value 648) cho M1..M4. Đây là 30% lệnh ga, không phải 30% RPM hay duty tín hiệu DShot.
+- `APP_DSHOT_TEST_ENABLE=0` và `APP_MOTOR_OUTPUT_PROTOCOL=APP_MOTOR_OUTPUT_DSHOT300` trong `Inc/app.h`: `DroneControl_Init()` nhận motor output thật; flight task xử lý UART, ARM/DISARM, watchdog, IMU, PID và mixer. Không tự chạy ga sau 15 s.
+- Đặt `APP_MOTOR_OUTPUT_PROTOCOL=APP_MOTOR_OUTPUT_PWM` hoặc `APP_MOTOR_OUTPUT_DSHOT600` để chọn giao thức khác mà vẫn giữ flow điều khiển bình thường.
+
+### Chế độ bench tùy chọn (mặc định tắt)
+
+- Chủ động đặt `APP_DSHOT_TEST_ENABLE=1` trong `Inc/app.h` để bật bench, mặc định chọn `APP_MOTOR_OUTPUT_DSHOT300`. Đặt `APP_MOTOR_OUTPUT_PROTOCOL=APP_MOTOR_OUTPUT_DSHOT600` để dùng cùng flow với DShot600. Tháo cánh trước khi cấp nguồn: cả bốn motor tự chạy, không cần ARM.
+- Sau khi `App_Init()` hoàn tất, flight task gọi `AppDshotTest_Step()` mỗi 1 ms: bắt đầu bằng frame 0, tiếp tục gửi 0 trong 15000 ms rồi gửi `0.30f` (DShot value 648) cho M1..M4, gửi frame mỗi 2 ms (500 Hz). Đây là 30% lệnh ga, không phải 30% RPM hay duty tín hiệu DShot.
 - `DroneControl_Init()` nhận motor NULL; flight step bỏ qua UART control/PID/IMU để tránh ghi đè và tránh sensor retry/calibration chặn luồng DShot. Telemetry điều khiển bay không phản ánh output test; xem `app_dshot_test`, `app_motor_driver.throttle_value` và `app_motor_driver.applied_throttle` bằng debugger.
 - DMA BUSY được bỏ qua đến tick sau; lỗi output được chốt vào `app_dshot_test.failed`, gọi Stop và không tự khởi động lại. Ngắt nguồn ESC để dừng test; DISARM/e-stop/watchdog từ web không điều khiển motor trong chế độ này.
-- Tắt test bằng `APP_DSHOT_TEST_ENABLE=0` rồi rebuild/flash; lúc đó mặc định trở về PWM. Đặt thêm `APP_MOTOR_OUTPUT_PROTOCOL=APP_MOTOR_OUTPUT_DSHOT300` hoặc `APP_MOTOR_OUTPUT_DSHOT600` để điều khiển bay bình thường bằng DShot. Cờ cũ `APP_DSHOT600_TEST_ENABLE=0` vẫn tắt bench; `=1` chọn bench DShot600 nếu chưa chọn protocol rõ ràng. Hai cờ bench không được mâu thuẫn.
+- Tắt test bằng `APP_DSHOT_TEST_ENABLE=0` rồi rebuild/flash; giao thức mặc định vẫn là DShot300. Cờ cũ `APP_DSHOT600_TEST_ENABLE=0` vẫn tắt bench; `=1` chọn bench DShot600 nếu chưa chọn protocol rõ ràng. Hai cờ bench không được mâu thuẫn.
 - `Inc/app_dshot_test.h` chứa sequencer header-only để không sửa source list do CubeMX sinh. Host regression nằm trong `Tests/motor_output/test_motor_output.c`.
 
 Luồng bên dưới áp dụng khi tắt bench test:
@@ -17,8 +22,9 @@ Luồng bên dưới áp dụng khi tắt bench test:
 CubeMX setup -> App_Set* -> App_Init -> App_Process/AppRtos_Bootstrap
   high-priority 1 ms: App_FlightControlStep
       UART commands -> DroneControl_Process
-      gyro/accel -> attitude conversion -> rate PID + Mahony9 -> motor/telemetry
-      mag 10 ms -> calibrated heading reference
+      gyro/accel -> body conversion -> Mahony6 -> Angle/Acro -> rate PID -> stage motor/telemetry
+      DroneControl_ServiceMotorOutput -> DShot latest bank every 2 ms (500 Hz)
+      mag 10 ms -> calibrated diagnostics (không tham gia Angle/Mahony6)
   telemetry 5 ms: logs/timing/mixer/UART diagnostics
   housekeeping 100 ms: heartbeat LED
 ```
@@ -28,10 +34,10 @@ CubeMX setup -> App_Set* -> App_Init -> App_Process/AppRtos_Bootstrap
 - `App_SetSpi`, `App_SetUsbTransmit`, `App_SetActivityLed`, `App_SetMotorTimer`, `App_SetControlUart` lưu các HAL handle/callback do CubeMX tạo để component dùng sau.
 - `App_OnUsbReceive(data, length)` cố ý bỏ dữ liệu: USB CDC chỉ dành diagnostics, control an toàn chỉ nhận qua USART1 DroneProtocol.
 - `App_OnUsbTransmitComplete()` xóa cờ USB busy để log kế tiếp được gửi.
-- `App_Init()` bật cycle counter; tạo motor output đã chọn ở trạng thái stop; init DroneControl; init/calibrate ICM20948, mag và attitude; đặt mọi timestamp/stat; toggle LED khởi động.
+- `App_Init()` bật cycle counter; tạo motor output đã chọn ở trạng thái stop; init DroneControl; init/calibrate ICM20948, mag diagnostics và Mahony6 attitude; đặt mọi timestamp/stat; toggle LED khởi động.
 - `App_StartMotorOutput(motors)` lấy đúng timer input clock theo APB/TIMPRE, init một `PwmTimer`, config/start bốn `PwmChannel`, rồi bind `MotorPwm`, `MotorDshot300` hoặc `MotorDshot` theo `APP_MOTOR_OUTPUT_PROTOCOL`; lỗi giữa chừng stop mọi channel đã start.
 - `App_Process()` chuyển quyền sang `AppRtos_Bootstrap`.
-- `App_FlightControlStep(now_ms)` xử lý UART/failsafe trước; retry IMU mỗi giây khi lỗi; poll attitude/gyro mỗi 1 ms; sau rate loop mới đọc mag mỗi 10 ms; tùy compile flag phát log IMU 20 ms.
+- `App_FlightControlStep(now_ms)` xử lý UART/failsafe trước; trước retry IMU mỗi giây khi lỗi, gọi `DroneControl_InvalidateImuSample()` để dừng motor đã ARM trước setup/calibration blocking; poll attitude/gyro mỗi 1 ms; gọi `DroneControl_ServiceMotorOutput(HAL_GetTick())` sau rate loop để gửi DShot mỗi 2 ms kể cả không có sample/packet mới; sau đó mới đọc mag mỗi 10 ms; tùy compile flag phát log IMU 20 ms.
 - `App_TelemetryStep(now_ms)` theo compile flag phát timing/mixer log theo chu kỳ, log DShot mỗi 500 ms nếu USB rảnh (bitrate, fault, DMA error, raw value, frame count, timer clock), rồi drain UART RX debug log.
 - `App_HousekeepingStep(now_ms)` toggle activity LED mỗi giây.
 - `App_GetTimingStats(stats)` dùng sequence counter chẵn/lẻ và memory barrier để chụp snapshot không rách; đổi cycle sang µs và tính min/mean/max cùng rate milli-Hz.
@@ -44,9 +50,9 @@ CubeMX setup -> App_Set* -> App_Init -> App_Process/AppRtos_Bootstrap
 - `App_ReportTiming()` lấy timing snapshot, tính jitter peak-to-peak, format một dòng và đánh dấu USB busy khi submit thành công.
 - `App_ReportMixer()` lấy snapshot mixer, scale số float để log integer, format throttle/PID/command/PWM/saturation rồi gửi USB.
 - `App_FloatToTenths(value)` đổi float sang integer phần mười có làm tròn và saturate phù hợp cho log.
-- `App_TryInitICM20948()` init SPI IMU, verify/read identity, cấu hình range/sample rate/DLPF, init Mahony9 và AK09916; lưu status để retry thay vì chạy tiếp với state giả hợp lệ.
+- `App_TryInitICM20948()` init SPI IMU, verify/read identity, cấu hình range/sample rate/DLPF, init Mahony6 và AK09916; reset mốc sample để lần đọc đầu dùng dt danh định; lưu status để retry thay vì chạy tiếp với state giả hợp lệ.
 - `App_CalibrateGyro()` khi IMU OK, bỏ mẫu đầu rồi cộng nhiều mẫu gyro đứng yên để tạo bias; lỗi đọc làm calibration thất bại an toàn.
-- `App_UpdateAttitude()` kiểm tra data-ready, đọc raw và đo thời gian; chuyển accel/gyro sang body/calibrated; tính `dt` từ DWT; luôn đưa gyro vào rate PID khi có sample. Nếu Mahony9 chưa init thì thử init bằng accel+mag; đã init thì update 9-axis hoặc IMU-only; publish telemetry và ghi timing ở mọi nhánh sample hợp lệ.
+- `App_UpdateAttitude()` kiểm tra data-ready, đọc raw và đo thời gian; chuyển accel/gyro sang body/calibrated, đảo specific force thành gravity và tính `dt` từ DWT. Mahony6 init bằng gravity trong khoảng 0.8..1.2 g, không cần mag; mỗi sample sau update gyro + accel correction rồi lấy Euler độ. Sample có `dt` ngoài 0.5..20 ms hoặc filter lỗi được đánh dấu attitude invalid trước khi được phép init lại ở sample sau. Gọi `DroneControl_UpdateFlightSample()` đúng một lần cho mỗi raw sample mới: timestamp, validity, roll/pitch độ và gyro FRD rad/s. Angle nhận attitude cùng sample trước rate PID; Acro chỉ phụ thuộc gyro. Telemetry dùng cùng validity/Euler/gyro và PID, gắn ID/time mẫu; DShot chỉ hoàn tất snapshot sau commit thành công ở output step; lỗi raw read không tạo sample giả mà được watchdog/freshness xử lý. Cuối cùng ghi timing pipeline và PID.
 - `App_UpdateMagnetometer()` yêu cầu IMU/mag init OK; đọc shadow AK09916, từ chối vector zero, map frame, đổi centi-µT, hiệu chỉnh hard/soft iron và đặt validity.
 - `App_ReportICM20948()` format accel, gyro, nhiệt độ, mag và Euler; nếu shadow mag liên tục zero thì định kỳ gọi debug sâu.
 - `App_ReportMagDebug()` đọc register master/slave/shadow và SLV4 probe rồi format kết quả chẩn đoán.

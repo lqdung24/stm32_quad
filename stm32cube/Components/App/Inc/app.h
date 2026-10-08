@@ -36,13 +36,13 @@ extern "C" {
 #define APP_MOTOR_OUTPUT_DSHOT600 1U
 #define APP_MOTOR_OUTPUT_DSHOT300 2U
 
-/* Bench debug: remove propellers. Disable this flag before normal control.
- * Honor the old DShot600 flag so existing builds can still disable the bench. */
+/* Normal control is the default. Opt in to bench debug only with propellers
+ * removed. Honor the old DShot600 flag for existing build overrides. */
 #ifndef APP_DSHOT_TEST_ENABLE
 #ifdef APP_DSHOT600_TEST_ENABLE
 #define APP_DSHOT_TEST_ENABLE APP_DSHOT600_TEST_ENABLE
 #else
-#define APP_DSHOT_TEST_ENABLE 1U
+#define APP_DSHOT_TEST_ENABLE 0U
 #endif
 #endif
 #if defined(APP_DSHOT600_TEST_ENABLE) && \
@@ -58,7 +58,7 @@ extern "C" {
 #define APP_MOTOR_OUTPUT_PROTOCOL APP_MOTOR_OUTPUT_DSHOT300
 #endif
 #else
-#define APP_MOTOR_OUTPUT_PROTOCOL APP_MOTOR_OUTPUT_PWM
+#define APP_MOTOR_OUTPUT_PROTOCOL APP_MOTOR_OUTPUT_DSHOT300
 #endif
 #endif
 

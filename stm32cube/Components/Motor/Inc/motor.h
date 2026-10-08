@@ -9,6 +9,8 @@ extern "C" {
 #include <stdint.h>
 
 #define MOTOR_OUTPUT_MAX_MOTORS 4U
+/* App/control scheduling policy: DShot command banks at nominal 500 Hz. */
+#define MOTOR_OUTPUT_DSHOT_PERIOD_MS 2U
 
 typedef enum
 {

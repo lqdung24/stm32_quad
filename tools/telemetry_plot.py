@@ -28,12 +28,17 @@ from typing import Deque, Optional
 MAGIC = 0xA55A
 VERSION = 1
 PACKET_TYPE_FLIGHT_TELEMETRY = 0x07
-PACKET_SIZE = 50
-PAYLOAD_SIZE = 32
+PACKET_TYPE_FLIGHT_TELEMETRY_SYNC = 0x08
+PACKET_SIZE = 58
+PAYLOAD_SIZE = 40
+LEGACY_PACKET_SIZE = 50
+LEGACY_PAYLOAD_SIZE = 32
 FLAG_STATE_MASK = 0x0007
 FLAG_ACTUATORS_ACTIVE = 1 << 3
 FLAG_ATTITUDE_VALID = 1 << 4
-FLAG_ALLOWED_MASK = 0x001F
+FLAG_OUTPUT_SAMPLE_MATCHED = 1 << 5
+FLAG_ALLOWED_MASK = 0x003F
+LEGACY_FLAG_ALLOWED_MASK = 0x001F
 HEADER_FORMAT = "<HBBHHHBBI"
 PAYLOAD_FORMAT = "<12h4H"
 STATE_NAMES = {0: "BOOT", 1: "DISARMED", 2: "ARMED", 3: "FAILSAFE", 4: "ERROR"}
@@ -52,6 +57,11 @@ def crc16_ccitt_false(data: bytes) -> int:
 class Telemetry:
     host_time_s: float
     timestamp_ms: int
+    sample_time_ms: int
+    sample_id: Optional[int]
+    motor_commit_time_ms: Optional[int]
+    output_sample_matched: bool
+    motor_commit_delay_ms: Optional[int]
     sequence: int
     session_id: int
     roll_deg: float
@@ -80,20 +90,22 @@ class Telemetry:
 
 
 def decode_packet(packet: bytes, host_time_s: Optional[float] = None) -> Telemetry:
-    """Validate and decode one raw 50-byte STM32 telemetry packet."""
-    if len(packet) != PACKET_SIZE:
-        raise ValueError(f"bad packet length {len(packet)}, expected {PACKET_SIZE}")
-    if crc16_ccitt_false(packet[:-2]) != struct.unpack_from("<H", packet, 48)[0]:
+    """Decode synchronized type 8 (58 bytes) or legacy type 7 (50 bytes)."""
+    legacy = len(packet) == LEGACY_PACKET_SIZE
+    if not legacy and len(packet) != PACKET_SIZE:
+        raise ValueError(f"bad packet length {len(packet)}")
+    if crc16_ccitt_false(packet[:-2]) != struct.unpack_from("<H", packet, len(packet) - 2)[0]:
         raise ValueError("CRC mismatch")
 
     magic, version, packet_type, sequence, session_id, flags, payload_len, reserved, timestamp_ms = (
         struct.unpack_from(HEADER_FORMAT, packet, 0)
     )
-    if magic != MAGIC or version != VERSION or packet_type != PACKET_TYPE_FLIGHT_TELEMETRY:
+    required_type = PACKET_TYPE_FLIGHT_TELEMETRY if legacy else PACKET_TYPE_FLIGHT_TELEMETRY_SYNC
+    if magic != MAGIC or version != VERSION or packet_type != required_type:
         raise ValueError("not a v1 FLIGHT_TELEMETRY packet")
-    if payload_len != PAYLOAD_SIZE or reserved != 0:
+    if payload_len != (LEGACY_PAYLOAD_SIZE if legacy else PAYLOAD_SIZE) or reserved != 0:
         raise ValueError("malformed telemetry header")
-    if flags & ~FLAG_ALLOWED_MASK:
+    if flags & ~(LEGACY_FLAG_ALLOWED_MASK if legacy else FLAG_ALLOWED_MASK):
         raise ValueError("unknown telemetry flags")
     state = flags & FLAG_STATE_MASK
     if state not in STATE_NAMES:
@@ -104,9 +116,16 @@ def decode_packet(packet: bytes, host_time_s: Optional[float] = None) -> Telemet
     if any(pwm < 1000 or pwm > 2000 for pwm in motors):
         raise ValueError("motor PWM outside 1000..2000 us")
     timestamp = time.time() if host_time_s is None else host_time_s
+    sample_id, commit_ms = (None, None) if legacy else struct.unpack_from("<II", packet, 48)
+    matched = not legacy and bool(flags & FLAG_OUTPUT_SAMPLE_MATCHED)
     return Telemetry(
         host_time_s=timestamp,
         timestamp_ms=timestamp_ms,
+        sample_time_ms=timestamp_ms,
+        sample_id=sample_id,
+        motor_commit_time_ms=commit_ms,
+        output_sample_matched=matched,
+        motor_commit_delay_ms=((commit_ms - timestamp_ms) & 0xFFFFFFFF) if matched else None,
         sequence=sequence,
         session_id=session_id,
         roll_deg=values[0] / 100.0,
@@ -274,16 +293,65 @@ def plot(receiver: Receiver, window_seconds: float) -> None:
 
 
 def self_test() -> None:
-    header = struct.pack(HEADER_FORMAT, MAGIC, VERSION, PACKET_TYPE_FLIGHT_TELEMETRY,
-                         7, 9, 2 | FLAG_ACTUATORS_ACTIVE | FLAG_ATTITUDE_VALID,
-                         PAYLOAD_SIZE, 0, 1234)
-    payload = struct.pack(PAYLOAD_FORMAT, -123, 456, 789, -1000, 2000, -3000,
-                          100, -200, 300, 400, -500, 600, 1000, 1200, 1500, 2000)
-    raw = header + payload
-    packet = raw + struct.pack("<H", crc16_ccitt_false(raw))
-    sample = decode_packet(packet, 1.0)
+    def fixture(legacy: bool = False, flags: int = 0x3A,
+                sample_time: int = 0xFFFFFFFF, commit_time: int = 0) -> bytes:
+        header = struct.pack(HEADER_FORMAT, MAGIC, VERSION,
+                             PACKET_TYPE_FLIGHT_TELEMETRY if legacy else PACKET_TYPE_FLIGHT_TELEMETRY_SYNC,
+                             7, 9, flags & 0x1F if legacy else flags,
+                             LEGACY_PAYLOAD_SIZE if legacy else PAYLOAD_SIZE, 0, sample_time)
+        payload = struct.pack(PAYLOAD_FORMAT, -123, 456, 789, -1000, 2000, -3000,
+                              100, -200, 300, 400, -500, 600, 1000, 1200, 1500, 2000)
+        raw = header + payload + (b"" if legacy else struct.pack("<II", 0, commit_time))
+        return raw + struct.pack("<H", crc16_ccitt_false(raw))
+
+    sample = decode_packet(fixture(), 1.0)
     assert sample.roll_deg == -1.23 and sample.gyro_z_rad_s == -3.0
     assert sample.motor4_us == 2000 and sample.armed and sample.attitude_valid
+    assert sample.sample_id == 0 and sample.motor_commit_time_ms == 0
+    assert sample.sample_time_ms == sample.timestamp_ms == 0xFFFFFFFF
+    assert sample.output_sample_matched and sample.motor_commit_delay_ms == 1
+    assert decode_packet(fixture(sample_time=1234, commit_time=1236)).motor_commit_delay_ms == 2
+    inactive = decode_packet(fixture(flags=0x11))
+    assert not inactive.output_sample_matched and inactive.motor_commit_delay_ms is None
+    legacy = decode_packet(fixture(legacy=True))
+    assert legacy.sample_id is None and legacy.motor_commit_time_ms is None
+    assert not legacy.output_sample_matched and legacy.motor_commit_delay_ms is None
+
+    def reject(packet: bytes) -> None:
+        try:
+            decode_packet(packet)
+        except ValueError:
+            return
+        raise AssertionError("malformed packet accepted")
+
+    reject(fixture()[:-1])
+    damaged = bytearray(fixture())
+    damaged[52] ^= 1
+    reject(bytes(damaged))
+    for packet, offset, value in [(fixture(), 3, 7), (fixture(), 10, 32),
+                                  (fixture(legacy=True), 8, 0x3A),
+                                  (fixture(), 8, 0x7A)]:
+        damaged = bytearray(packet)
+        damaged[offset] = value
+        damaged[-2:] = struct.pack("<H", crc16_ccitt_false(damaged[:-2]))
+        reject(bytes(damaged))
+    # Exercise the actual CSV writer: unknown legacy metadata stays empty.
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="drone-telemetry-test-") as directory:
+        path = Path(directory) / "samples.csv"
+        receiver = Receiver("ws://unused", path, 1.0)
+        try:
+            receiver.add_packet(fixture())
+            receiver.add_packet(fixture(legacy=True))
+        finally:
+            receiver.close()
+        with path.open(newline="", encoding="utf-8") as stream:
+            rows = list(csv.DictReader(stream))
+        assert rows[0]["sample_id"] == "0" and rows[0]["motor_commit_time_ms"] == "0"
+        assert rows[0]["sample_time_ms"] == str(0xFFFFFFFF)
+        assert rows[0]["motor_commit_delay_ms"] == "1"
+        assert rows[1]["sample_id"] == rows[1]["motor_commit_time_ms"] == ""
+        assert rows[1]["motor_commit_delay_ms"] == ""
     print("telemetry parser self-test: PASS")
 
 

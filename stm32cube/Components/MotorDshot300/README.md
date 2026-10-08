@@ -25,13 +25,18 @@ At 60 MHz this means ARR=199, bit-0 high=75 ticks and bit-1 high=150 ticks.
 The 16-bit packet and two low slots take 60 us; App still schedules updates
 at nominal 1 ms intervals.
 
-App defaults to this component with `APP_MOTOR_OUTPUT_DSHOT300` and
-`APP_DSHOT_TEST_ENABLE=1`: initialize, send value 0 for 15000 ms, then send
+App defaults to normal command/PID/mixer control with
+`APP_MOTOR_OUTPUT_PROTOCOL=APP_MOTOR_OUTPUT_DSHOT300` and
+`APP_DSHOT_TEST_ENABLE=0`. Motor output is controlled by the normal
+ARM/DISARM, e-stop and radio watchdog gates.
+
+Explicitly setting `APP_DSHOT_TEST_ENABLE=1` enables the optional bench:
+initialize, send value 0 for 15000 ms, then send
 0.30 normalized throttle (raw value 648) to all four motors. The same sequencer
 runs DShot600 when selected. DMA BUSY defers to the next tick; output errors
 latch the test off and request Stop. Remove propellers: this bench bypasses
 ARM/DISARM, e-stop and radio watchdog; power off ESCs to stop it.
 
-For normal command/PID/mixer control, set `APP_DSHOT_TEST_ENABLE=0` and explicitly
-select `APP_MOTOR_OUTPUT_DSHOT300`. ESC support and signal timing still require
-bench verification. See `../MotorDshot/README.md` for the shared DMA requirements.
+Return to normal control with `APP_DSHOT_TEST_ENABLE=0`; DShot300 remains the
+default protocol. ESC support and signal timing still require bench
+verification. See `../MotorDshot/README.md` for the shared DMA requirements.

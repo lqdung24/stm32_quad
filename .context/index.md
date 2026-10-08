@@ -20,7 +20,7 @@ Air ESP32
 STM32H743 flight controller
   stm32cube/Components/App
        +-> DroneControl -> RateControl -> MotorMixer -> MotorOutput -> ESCs
-       +-> ICM20948 -> Attitude -> Mahony9 -> attitude/rate telemetry
+       +-> ICM20948 -> Attitude -> Mahony6 -> angle control + attitude telemetry
 
 RFID utility (standalone)
   esp_controller/rfid_s3/ -> RC522 over SPI + USB command console
@@ -38,7 +38,7 @@ RFID utility (standalone)
 | `esp_controller/rfid_s3/` | Standalone RC522/MIFARE CLI | `domains/rfid.md` |
 | `stm32cube/Components/App/` | Hardware composition, RTOS scheduling, IMU pipeline and diagnostics | `domains/hardware-sensors.md` |
 | `stm32cube/Components/DroneControl/` | Command validation, state machine, failsafe and telemetry TX | `domains/control-safety.md` |
-| `stm32cube/Components/RateControl/` | Three-axis body-rate PID | `domains/control-safety.md` |
+| `stm32cube/Components/RateControl/` | Angle outer P + three-axis body-rate PID | `domains/control-safety.md` |
 | `stm32cube/Components/MotorMixer/` | Quad-X mixing and saturation handling | `domains/control-safety.md` |
 | `stm32cube/Components/Motor/` | Protocol-independent four-motor output and arm/disarm gate | `domains/control-safety.md` |
 | `stm32cube/Components/MotorPWM/` | Standard PWM ESC output driver | `domains/control-safety.md` |
@@ -55,7 +55,7 @@ RFID utility (standalone)
 ## Domain routing
 
 - Architecture, technology, naming or ownership: `architecture.md`
-- ARM/DISARM, acro, PID, mixer, motor output or failsafe: `domains/control-safety.md`
+- ARM/DISARM, angle/acro, PID, mixer, motor output or failsafe: `domains/control-safety.md`
 - Packet fields, CRC, COBS, sequence or compatibility: `domains/drone-protocol.md`
 - ESP-NOW, USB/UART bridges, peer MAC or link status: `domains/esp-link.md`
 - IMU, coordinate frame, units, calibration, Mahony or RTOS sampling: `domains/hardware-sensors.md`

@@ -17,16 +17,33 @@
 #define CONTROL_ESC_MAX_PULSE_US 2000U
 #define CONTROL_PILOT_IDLE_PULSE_US 1225U
 #define CONTROL_PILOT_MAX_PULSE_US 1800U
-#define CONTROL_MOTOR_THRESHOLD_TEST_MODE 0U
 #define CONTROL_DEG_TO_RAD 0.01745329252f
 #define CONTROL_ROLL_PITCH_MAX_RATE_RAD_S (200.0f * CONTROL_DEG_TO_RAD)
 #define CONTROL_YAW_MAX_RATE_RAD_S (150.0f * CONTROL_DEG_TO_RAD)
+#define CONTROL_MIN_SAMPLE_DT_S 0.0005f
+#define CONTROL_MAX_SAMPLE_DT_S 0.050f
+#define CONTROL_ANGLE_MAX_SAMPLE_DT_S 0.020f
+#define CONTROL_TELEMETRY_MAX_SAMPLE_AGE_MS 50U
+
+_Static_assert(DRONE_PROTOCOL_MAX_PACKET_SIZE + 2U <= CONTROL_UART_ENCODED_FRAME_SIZE,
+               "UART TX frame must fit maximum packet, COBS code and delimiter");
 
 typedef struct
 {
     UART_HandleTypeDef *uart;
     MotorOutput *motors;
     RateControl rate_control;
+    int16_t pilot_command[RATE_CONTROL_AXIS_COUNT];
+    uint32_t last_attitude_sample_ms;
+    bool angle_mode;
+    bool motor_test_mode;
+    bool has_valid_attitude;
+    bool dshot_arming;
+    uint32_t dshot_arming_started_ms;
+    uint32_t dshot_zero_started_ms;
+    uint32_t dshot_last_zero_ms;
+    uint16_t dshot_zero_frames;
+    uint32_t last_motor_update_ms;
     volatile uint16_t rx_head;
     volatile uint16_t rx_tail;
     volatile uint16_t log_head;
@@ -53,6 +70,12 @@ typedef struct
     uint32_t last_status_ms;
     uint32_t last_flight_telemetry_ms;
     DroneFlightTelemetry flight_telemetry;
+    DroneFlightTelemetry pending_flight_sample;
+    uint32_t flight_sample_id;
+    uint32_t motor_telemetry_commit_ms;
+    bool pending_flight_sample_available;
+    bool sample_motor_committed;
+    bool flight_sample_pid_valid;
     volatile uint32_t mixer_telemetry_sequence;
     DroneMixerTelemetry mixer_telemetry;
     bool initialized;
@@ -72,12 +95,16 @@ static void process_raw_packet(const uint8_t *packet, size_t length,
 static void process_control_command(const DroneControlCommand *command,
                                     uint32_t now_ms);
 static void enter_failsafe(uint16_t reason);
+static void service_dshot_arming(uint32_t now_ms);
+static bool attitude_is_fresh(uint32_t now_ms);
 static void disarm_output(void);
 static bool apply_throttle(uint16_t requested);
 static float throttle_to_mixer_command(uint16_t throttle);
+static bool apply_direct_motor_output(bool commit);
 static bool apply_mixed_output(float roll_correction,
                                float pitch_correction,
-                               float yaw_correction);
+                               float yaw_correction,
+                               bool commit);
 static void publish_mixer_telemetry(const MotorMixerResult *mix,
                                     const uint16_t pulses[MOTOR_OUTPUT_MAX_MOTORS],
                                     float roll_correction,
@@ -90,6 +117,7 @@ static bool send_status(uint32_t now_ms);
 static bool send_flight_telemetry(void);
 static bool try_send_packet(const uint8_t *raw, size_t raw_length);
 static bool scale_to_i16(float value, float scale, int16_t *output);
+static void complete_flight_telemetry(DroneFlightTelemetry *sample, bool matched);
 
 _Static_assert(CONTROL_PILOT_MAX_PULSE_US <= CONTROL_ESC_MAX_PULSE_US,
                "pilot maximum must leave valid actuator headroom");
@@ -105,7 +133,7 @@ static const RateControlConfig rate_control_config = {
         [RATE_CONTROL_ROLL] = {
             .kp = 45.0f,
             .ki = 20.0f,
-            .kd = 0.8f,
+            .kd = 0.6f,
             .integral_limit = 60.0f,
             .output_limit = 200.0f,
             .derivative_cutoff_hz = 20.0f,
@@ -113,7 +141,7 @@ static const RateControlConfig rate_control_config = {
         [RATE_CONTROL_PITCH] = {
             .kp = 45.0f,
             .ki = 20.0f,
-            .kd = 0.8f,
+            .kd = 0.6f,
             .integral_limit = 60.0f,
             .output_limit = 200.0f,
             .derivative_cutoff_hz = 20.0f,
@@ -159,52 +187,140 @@ void DroneControl_Init(UART_HandleTypeDef *uart, MotorOutput *motors)
     start_uart_receive();
 }
 
-bool DroneControl_UpdateBodyRates(float roll_rad_s,
-                                  float pitch_rad_s,
-                                  float yaw_rad_s,
-                                  float dt_s)
+void DroneControl_InvalidateImuSample(void)
 {
-#if CONTROL_MOTOR_THRESHOLD_TEST_MODE
-    (void)roll_rad_s;
-    (void)pitch_rad_s;
-    (void)yaw_rad_s;
-    (void)dt_s;
+    if (!control.initialized)
+    {
+        return;
+    }
+    control.has_valid_attitude = false;
+    control.flight_telemetry_available = false;
+    control.pending_flight_sample_available = false;
     RateControl_Reset(&control.rate_control);
-    return false;
-#else
-    const float measured_rad_s[RATE_CONTROL_AXIS_COUNT] = {
-        roll_rad_s,
-        pitch_rad_s,
-        yaw_rad_s,
-    };
+    if ((control.state == DRONE_STATE_ARMED) || control.dshot_arming)
+    {
+        /* Sensor setup/calibration can block the flight-task watchdog. */
+        enter_failsafe(DRONE_ERROR_FAILSAFE_ACTIVE);
+    }
+}
 
-    if (!control.initialized ||
-        (control.state != DRONE_STATE_ARMED) ||
+bool DroneControl_UpdateFlightSample(uint32_t timestamp_ms,
+                                     bool attitude_valid,
+                                     float roll_deg,
+                                     float pitch_deg,
+                                     float gyro_roll_rad_s,
+                                     float gyro_pitch_rad_s,
+                                     float gyro_yaw_rad_s,
+                                     float dt_s)
+{
+    const float measured_rad_s[RATE_CONTROL_AXIS_COUNT] = {
+        gyro_roll_rad_s,
+        gyro_pitch_rad_s,
+        gyro_yaw_rad_s,
+    };
+    const bool valid_rates =
+        isfinite(gyro_roll_rad_s) && isfinite(gyro_pitch_rad_s) &&
+        isfinite(gyro_yaw_rad_s) && isfinite(dt_s) &&
+        (dt_s >= CONTROL_MIN_SAMPLE_DT_S) &&
+        (dt_s <= CONTROL_MAX_SAMPLE_DT_S);
+    const uint32_t now_ms = HAL_GetTick();
+
+    if (!control.initialized)
+    {
+        return false;
+    }
+    /* A previous pending sample must never be paired with a new PID result. */
+    control.pending_flight_sample_available = false;
+    ++control.flight_sample_id;
+    control.sample_motor_committed = false;
+    control.flight_sample_pid_valid = false;
+    control.has_valid_attitude =
+        attitude_valid && valid_rates &&
+        (dt_s <= CONTROL_ANGLE_MAX_SAMPLE_DT_S) &&
+        isfinite(roll_deg) && isfinite(pitch_deg) &&
+        (fabsf(roll_deg) <= 180.0f) && (fabsf(pitch_deg) <= 90.0f) &&
+        ((uint32_t)(now_ms - timestamp_ms) <
+         DRONE_CONTROL_ATTITUDE_TIMEOUT_MS);
+    if (control.has_valid_attitude)
+    {
+        control.last_attitude_sample_ms = timestamp_ms;
+    }
+    if (control.angle_mode &&
+        ((control.state == DRONE_STATE_ARMED) || control.dshot_arming) &&
+        !attitude_is_fresh(now_ms))
+    {
+        enter_failsafe(DRONE_ERROR_FAILSAFE_ACTIVE);
+        return false;
+    }
+    if (control.motor_test_mode)
+    {
+        RateControl_Reset(&control.rate_control);
+        return false;
+    }
+    if ((control.state != DRONE_STATE_ARMED) ||
         (control.applied_throttle == 0U))
     {
         RateControl_Reset(&control.rate_control);
         return false;
     }
 
+    if (control.angle_mode)
+    {
+        if (!RateControl_SetAngleCommand(
+                &control.rate_control,
+                control.pilot_command[RATE_CONTROL_ROLL],
+                control.pilot_command[RATE_CONTROL_PITCH],
+                control.pilot_command[RATE_CONTROL_YAW],
+                roll_deg, pitch_deg))
+        {
+            enter_failsafe(DRONE_ERROR_FAILSAFE_ACTIVE);
+            return false;
+        }
+    }
+    else
+    {
+        RateControl_SetCommand(&control.rate_control,
+                               control.pilot_command[RATE_CONTROL_ROLL],
+                               control.pilot_command[RATE_CONTROL_PITCH],
+                               control.pilot_command[RATE_CONTROL_YAW]);
+    }
+
     if (!RateControl_Update(&control.rate_control, measured_rad_s, dt_s))
     {
         RateControl_Reset(&control.rate_control);
-        (void)apply_mixed_output(0.0f, 0.0f, 0.0f);
+        if (!apply_mixed_output(0.0f, 0.0f, 0.0f,
+                MotorOutput_GetProtocol(control.motors) != MOTOR_PROTOCOL_DSHOT))
+        {
+            control.state = DRONE_STATE_ERROR;
+            control.error_flags |= DRONE_ERROR_PWM_INIT;
+            disarm_output();
+        }
         return false;
     }
 
     if (!apply_mixed_output(
             control.rate_control.debug.output[RATE_CONTROL_ROLL],
             control.rate_control.debug.output[RATE_CONTROL_PITCH],
-            control.rate_control.debug.output[RATE_CONTROL_YAW]))
+            control.rate_control.debug.output[RATE_CONTROL_YAW],
+            MotorOutput_GetProtocol(control.motors) != MOTOR_PROTOCOL_DSHOT))
     {
         control.state = DRONE_STATE_ERROR;
         control.error_flags |= DRONE_ERROR_PWM_INIT;
         disarm_output();
         return false;
     }
+    control.flight_sample_pid_valid = true;
     return true;
-#endif
+}
+
+bool DroneControl_UpdateBodyRates(float roll_rad_s,
+                                  float pitch_rad_s,
+                                  float yaw_rad_s,
+                                  float dt_s)
+{
+    return DroneControl_UpdateFlightSample(HAL_GetTick(), false, 0.0f, 0.0f,
+                                           roll_rad_s, pitch_rad_s,
+                                           yaw_rad_s, dt_s);
 }
 
 bool DroneControl_GetRateControlDebug(RateControlDebug *debug)
@@ -286,10 +402,9 @@ void DroneControl_PublishFlightTelemetrySample(uint32_t timestamp_ms,
         .state = (uint8_t)control.state,
         .actuators_active = control.mixer_telemetry.active,
         .attitude_valid = attitude_valid,
+        .sample_id = control.flight_sample_id,
     };
     uint8_t axis;
-    uint8_t motor;
-
     if (!control.initialized || (telemetry.state > DRONE_STATE_ERROR))
     {
         return;
@@ -303,29 +418,60 @@ void DroneControl_PublishFlightTelemetrySample(uint32_t timestamp_ms,
             !scale_to_i16(control.rate_control.debug.target_rad_s[axis],
                           1000.0f,
                           &telemetry.rate_setpoint_mrad_s[axis]) ||
-            !scale_to_i16(control.mixer_telemetry.pid_output[axis],
+            !scale_to_i16(control.rate_control.debug.output[axis],
                           100.0f,
                           &telemetry.pid_command_centi[axis]))
         {
             return;
         }
     }
+    /* Active flight waits for the corresponding bank to reach the driver.
+     * Test/zero/disarmed output has no causal relationship to the IMU sample. */
+    if ((control.state == DRONE_STATE_ARMED) &&
+        (control.applied_throttle > 0U) && !control.motor_test_mode)
+    {
+        if (!control.sample_motor_committed)
+        {
+            telemetry.output_sample_matched = control.flight_sample_pid_valid;
+            control.pending_flight_sample = telemetry;
+            control.pending_flight_sample_available = true;
+            return;
+        }
+        complete_flight_telemetry(&telemetry, control.flight_sample_pid_valid);
+        return;
+    }
+    complete_flight_telemetry(&telemetry, false);
+}
+
+static void complete_flight_telemetry(DroneFlightTelemetry *sample, bool matched)
+{
+    uint8_t motor;
+
     for (motor = 0U; motor < MOTOR_OUTPUT_MAX_MOTORS; ++motor)
     {
-        telemetry.motor_pwm_us[motor] = control.mixer_telemetry.pulse_us[motor];
-        if ((telemetry.motor_pwm_us[motor] < CONTROL_ESC_MIN_PULSE_US) ||
-            (telemetry.motor_pwm_us[motor] > CONTROL_ESC_MAX_PULSE_US))
+        sample->motor_pwm_us[motor] = control.mixer_telemetry.pulse_us[motor];
+        if ((sample->motor_pwm_us[motor] < CONTROL_ESC_MIN_PULSE_US) ||
+            (sample->motor_pwm_us[motor] > CONTROL_ESC_MAX_PULSE_US))
         {
             return;
         }
     }
-
-    control.flight_telemetry = telemetry;
+    sample->actuators_active = control.mixer_telemetry.active;
+    sample->motor_commit_time_ms = control.motor_telemetry_commit_ms;
+    sample->output_sample_matched = matched;
+    control.flight_telemetry = *sample;
     control.flight_telemetry_available = true;
 }
 
 void DroneControl_Process(uint32_t now_ms)
 {
+    /* Stop before queued commands can reapply collective with stale attitude. */
+    if (control.angle_mode &&
+        ((control.state == DRONE_STATE_ARMED) || control.dshot_arming) &&
+        !attitude_is_fresh(now_ms))
+    {
+        enter_failsafe(DRONE_ERROR_FAILSAFE_ACTIVE);
+    }
     process_uart_bytes(now_ms);
 
     if (control.has_valid_control &&
@@ -335,6 +481,8 @@ void DroneControl_Process(uint32_t now_ms)
         control.has_valid_control = false;
         enter_failsafe(DRONE_ERROR_UART_LINK_LOST);
     }
+
+    service_dshot_arming(now_ms);
 
     if ((uint32_t)(now_ms - control.rate_window_ms) >= 1000U)
     {
@@ -491,6 +639,10 @@ static void process_control_command(const DroneControlCommand *command,
         (command->header.flags & DRONE_CONTROL_FLAG_ARM_REQUEST) != 0U;
     const bool emergency_stop =
         (command->header.flags & DRONE_CONTROL_FLAG_EMERGENCY_STOP) != 0U;
+    const bool requested_angle_mode =
+        (command->header.flags & DRONE_CONTROL_FLAG_ANGLE_MODE) != 0U;
+    const bool requested_motor_test_mode =
+        (command->header.flags & DRONE_CONTROL_FLAG_MOTOR_TEST) != 0U;
     const bool new_session =
         !control.has_session ||
         (command->header.session_id != control.active_session);
@@ -541,10 +693,9 @@ static void process_control_command(const DroneControlCommand *command,
     control.error_flags &= (uint16_t)~DRONE_ERROR_UART_LINK_LOST;
     control.requested_throttle = command->throttle;
     control.motor_test_selection = (uint8_t)command->aux1;
-    RateControl_SetCommand(&control.rate_control,
-                           command->roll,
-                           command->pitch,
-                           command->yaw);
+    control.pilot_command[RATE_CONTROL_ROLL] = command->roll;
+    control.pilot_command[RATE_CONTROL_PITCH] = command->pitch;
+    control.pilot_command[RATE_CONTROL_YAW] = command->yaw;
 
     if (control.state == DRONE_STATE_ERROR)
     {
@@ -565,6 +716,8 @@ static void process_control_command(const DroneControlCommand *command,
     if (!arm_requested)
     {
         disarm_output();
+        control.angle_mode = requested_angle_mode;
+        control.motor_test_mode = requested_motor_test_mode;
         if (control.state == DRONE_STATE_ERROR)
         {
             return;
@@ -580,6 +733,14 @@ static void process_control_command(const DroneControlCommand *command,
         return;
     }
 
+    if (((control.state == DRONE_STATE_ARMED) || control.dshot_arming) &&
+        ((control.angle_mode != requested_angle_mode) ||
+         (control.motor_test_mode != requested_motor_test_mode)))
+    {
+        enter_failsafe(DRONE_ERROR_INVALID_PACKET);
+        return;
+    }
+
     if (control.state == DRONE_STATE_FAILSAFE ||
         control.require_disarm_cycle)
     {
@@ -588,8 +749,26 @@ static void process_control_command(const DroneControlCommand *command,
         return;
     }
 
+    if (control.dshot_arming)
+    {
+        /* The pilot must keep ARM and throttle zero throughout pre-arm. */
+        if (command->throttle != 0U)
+        {
+            enter_failsafe(DRONE_ERROR_ARM_REJECTED);
+        }
+        return;
+    }
+
     if (control.state == DRONE_STATE_DISARMED)
     {
+        control.angle_mode = requested_angle_mode;
+        control.motor_test_mode = requested_motor_test_mode;
+        RateControl_Reset(&control.rate_control);
+        if (control.angle_mode && !attitude_is_fresh(now_ms))
+        {
+            control.error_flags |= DRONE_ERROR_ARM_REJECTED;
+            return;
+        }
         if (command->throttle != 0U)
         {
             control.error_flags |= DRONE_ERROR_ARM_REJECTED;
@@ -599,6 +778,19 @@ static void process_control_command(const DroneControlCommand *command,
         {
             control.state = DRONE_STATE_ERROR;
             control.error_flags |= DRONE_ERROR_PWM_INIT;
+            disarm_output();
+            return;
+        }
+        if (MotorOutput_GetProtocol(control.motors) == MOTOR_PROTOCOL_DSHOT)
+        {
+            /* Start() has submitted the first DShot value-zero frame. */
+            control.dshot_arming = true;
+            control.dshot_arming_started_ms = now_ms;
+            control.dshot_zero_started_ms = now_ms;
+            control.dshot_last_zero_ms = now_ms;
+            control.dshot_zero_frames = 1U;
+            control.last_motor_update_ms = HAL_GetTick();
+            control.motor_telemetry_commit_ms = control.last_motor_update_ms;
             return;
         }
         control.state = DRONE_STATE_ARMED;
@@ -606,6 +798,11 @@ static void process_control_command(const DroneControlCommand *command,
 
     if (control.state == DRONE_STATE_ARMED)
     {
+        if (control.angle_mode && !attitude_is_fresh(now_ms))
+        {
+            enter_failsafe(DRONE_ERROR_FAILSAFE_ACTIVE);
+            return;
+        }
         if (!apply_throttle(command->throttle))
         {
             control.state = DRONE_STATE_ERROR;
@@ -613,6 +810,117 @@ static void process_control_command(const DroneControlCommand *command,
             disarm_output();
         }
     }
+}
+
+void DroneControl_ServiceMotorOutput(uint32_t now_ms)
+{
+    bool output_ok;
+
+    if (!control.initialized || (control.state != DRONE_STATE_ARMED) ||
+        (MotorOutput_GetProtocol(control.motors) != MOTOR_PROTOCOL_DSHOT))
+    {
+        return;
+    }
+    /* Recheck safety at the actual output step, including time spent on IMU. */
+    if (control.angle_mode && !attitude_is_fresh(now_ms))
+    {
+        enter_failsafe(DRONE_ERROR_FAILSAFE_ACTIVE);
+        return;
+    }
+    if (!control.has_valid_control ||
+        ((uint32_t)(now_ms - control.last_valid_control_ms) >=
+         DRONE_CONTROL_LINK_TIMEOUT_MS))
+    {
+        control.has_valid_control = false;
+        enter_failsafe(DRONE_ERROR_UART_LINK_LOST);
+        return;
+    }
+    if ((uint32_t)(now_ms - control.last_motor_update_ms) <
+        MOTOR_OUTPUT_DSHOT_PERIOD_MS)
+    {
+        return;
+    }
+    /* Repeat the latest bank even at zero throttle or in MOTOR_TEST without
+     * new UART/IMU data. Missed periods never cause catch-up frame bursts. */
+    output_ok = control.motor_test_mode
+        ? apply_direct_motor_output(true)
+        : apply_mixed_output(
+            control.rate_control.debug.output[RATE_CONTROL_ROLL],
+            control.rate_control.debug.output[RATE_CONTROL_PITCH],
+            control.rate_control.debug.output[RATE_CONTROL_YAW], true);
+    if (!output_ok)
+    {
+        control.state = DRONE_STATE_ERROR;
+        control.error_flags |= DRONE_ERROR_PWM_INIT;
+        disarm_output();
+    }
+}
+
+static void service_dshot_arming(uint32_t now_ms)
+{
+    static const float zero[MOTOR_OUTPUT_MAX_MOTORS] = {0.0f, 0.0f, 0.0f, 0.0f};
+    MotorStatus status;
+
+    if (!control.dshot_arming)
+    {
+        return;
+    }
+    if ((uint32_t)(now_ms - control.dshot_arming_started_ms) >=
+        DRONE_CONTROL_DSHOT_ARM_TIMEOUT_MS)
+    {
+        enter_failsafe(DRONE_ERROR_ARM_REJECTED);
+        return;
+    }
+    /* The flight task sends these frames independently of radio packet timing. */
+    if ((uint32_t)(now_ms - control.last_motor_update_ms) <
+        MOTOR_OUTPUT_DSHOT_PERIOD_MS)
+    {
+        return;
+    }
+    status = MotorOutput_SetAllThrottle(control.motors, zero,
+                                       MOTOR_OUTPUT_MAX_MOTORS);
+    if (status == MOTOR_OK)
+    {
+        status = MotorOutput_Update(control.motors);
+    }
+    if (status == MOTOR_BUSY)
+    {
+        return;
+    }
+    if (status != MOTOR_OK)
+    {
+        control.state = DRONE_STATE_ERROR;
+        control.error_flags |= DRONE_ERROR_PWM_INIT;
+        disarm_output();
+        return;
+    }
+    if ((uint32_t)(now_ms - control.dshot_last_zero_ms) >
+        DRONE_CONTROL_DSHOT_ZERO_MAX_GAP_MS)
+    {
+        control.dshot_zero_started_ms = now_ms;
+        control.dshot_zero_frames = 0U;
+    }
+    control.dshot_last_zero_ms = now_ms;
+    control.last_motor_update_ms = HAL_GetTick();
+    control.motor_telemetry_commit_ms = control.last_motor_update_ms;
+    if (control.dshot_zero_frames < DRONE_CONTROL_DSHOT_ZERO_MIN_FRAMES)
+    {
+        ++control.dshot_zero_frames;
+    }
+    if (((uint32_t)(now_ms - control.dshot_zero_started_ms) >=
+         DRONE_CONTROL_DSHOT_ZERO_ARM_MS) &&
+        (control.dshot_zero_frames >= DRONE_CONTROL_DSHOT_ZERO_MIN_FRAMES))
+    {
+        control.dshot_arming = false;
+        control.state = DRONE_STATE_ARMED;
+    }
+}
+
+static bool attitude_is_fresh(uint32_t now_ms)
+{
+    return control.has_valid_attitude &&
+        ((uint32_t)(now_ms - control.last_attitude_sample_ms) <
+         DRONE_CONTROL_ATTITUDE_TIMEOUT_MS);
 }
 
 static void enter_failsafe(uint16_t reason)
@@ -630,11 +938,17 @@ static void disarm_output(void)
 {
     MotorStatus motor_status = MotorOutput_Stop(control.motors);
 
+    if (motor_status == MOTOR_OK)
+    {
+        control.motor_telemetry_commit_ms = HAL_GetTick();
+    }
     if ((motor_status != MOTOR_OK) && (motor_status != MOTOR_BUSY))
     {
         control.error_flags |= DRONE_ERROR_PWM_INIT;
         control.state = DRONE_STATE_ERROR;
     }
+    control.dshot_arming = false;
+    control.dshot_zero_frames = 0U;
     RateControl_Reset(&control.rate_control);
     control.applied_throttle = 0U;
     publish_disarmed_telemetry();
@@ -655,16 +969,24 @@ static bool apply_throttle(uint16_t requested)
     }
 
     control.applied_throttle = applied;
-    /*
-     * A control packet may arrive between gyro samples. Retain the most recent
-     * PID correction when applying the new collective so packet handling does
-     * not briefly overwrite the stabilized output with equal motor commands.
-     * RateControl_Reset() clears these values on disarm/failsafe/invalid input.
-     */
+    if (applied == 0U)
+    {
+        RateControl_Reset(&control.rate_control);
+        control.pending_flight_sample_available = false;
+        control.flight_telemetry_available = false;
+    }
+    if (control.motor_test_mode)
+    {
+        return apply_direct_motor_output(
+            MotorOutput_GetProtocol(control.motors) != MOTOR_PROTOCOL_DSHOT);
+    }
+    /* Keep the latest PID correction when staging collective between samples.
+     * DShot commits only in the periodic service; PWM commits immediately. */
     return apply_mixed_output(
         control.rate_control.debug.output[RATE_CONTROL_ROLL],
         control.rate_control.debug.output[RATE_CONTROL_PITCH],
-        control.rate_control.debug.output[RATE_CONTROL_YAW]);
+        control.rate_control.debug.output[RATE_CONTROL_YAW],
+        MotorOutput_GetProtocol(control.motors) != MOTOR_PROTOCOL_DSHOT);
 }
 
 static float throttle_to_mixer_command(uint16_t throttle)
@@ -684,9 +1006,60 @@ static float throttle_to_mixer_command(uint16_t throttle)
                                  CONTROL_PILOT_IDLE_PULSE_US));
 }
 
+static bool apply_direct_motor_output(bool commit)
+{
+    MotorMixerResult output = {0};
+    float normalized[MOTOR_OUTPUT_MAX_MOTORS];
+    uint16_t pulses[MOTOR_OUTPUT_MAX_MOTORS];
+    const float command = throttle_to_mixer_command(control.applied_throttle);
+    const bool active = (control.state == DRONE_STATE_ARMED) &&
+                        (control.applied_throttle > 0U);
+    MotorStatus status;
+    uint8_t motor;
+
+    output.collective_command = command;
+    output.correction_scale = 1.0f;
+    for (motor = 0U; motor < MOTOR_OUTPUT_MAX_MOTORS; ++motor)
+    {
+        const bool selected =
+            (control.motor_test_selection == DRONE_CONTROL_MOTOR_SELECT_ALL) ||
+            (control.motor_test_selection == (uint8_t)(motor + 1U));
+        output.command[motor] = (active && selected) ? command : 0.0f;
+        normalized[motor] = output.command[motor] / 1000.0f;
+    }
+    status = MotorOutput_SetAllThrottle(control.motors, normalized,
+                                        MOTOR_OUTPUT_MAX_MOTORS);
+    if (status != MOTOR_OK)
+    {
+        return false;
+    }
+    if (!commit)
+    {
+        return true; /* DShot is staged until the periodic output step. */
+    }
+    status = MotorOutput_Update(control.motors);
+    if (status == MOTOR_BUSY)
+    {
+        return true;
+    }
+    if (status != MOTOR_OK)
+    {
+        return false;
+    }
+    control.last_motor_update_ms = HAL_GetTick();
+    control.motor_telemetry_commit_ms = control.last_motor_update_ms;
+    for (motor = 0U; motor < MOTOR_OUTPUT_MAX_MOTORS; ++motor)
+    {
+        pulses[motor] = get_legacy_motor_output(motor);
+    }
+    publish_mixer_telemetry(&output, pulses, 0.0f, 0.0f, 0.0f, active);
+    return true;
+}
+
 static bool apply_mixed_output(float roll_correction,
                                float pitch_correction,
-                               float yaw_correction)
+                               float yaw_correction,
+                               bool commit)
 {
     MotorMixerResult mix;
     float normalized[MOTOR_OUTPUT_MAX_MOTORS];
@@ -711,26 +1084,16 @@ static bool apply_mixed_output(float roll_correction,
     {
         normalized[motor] = active ? (mix.command[motor] / 1000.0f) : 0.0f;
     }
-#if CONTROL_MOTOR_THRESHOLD_TEST_MODE
-    if (active &&
-        (control.motor_test_selection != DRONE_CONTROL_MOTOR_SELECT_ALL))
-    {
-        for (motor = 0U; motor < MOTOR_OUTPUT_MAX_MOTORS; ++motor)
-        {
-            if (control.motor_test_selection != (uint8_t)(motor + 1U))
-            {
-                mix.command[motor] = 0.0f;
-                normalized[motor] = 0.0f;
-            }
-        }
-    }
-#endif
     motor_status = MotorOutput_SetAllThrottle(control.motors,
                                               normalized,
                                               MOTOR_OUTPUT_MAX_MOTORS);
     if (motor_status != MOTOR_OK)
     {
         return false;
+    }
+    if (!commit)
+    {
+        return true; /* The latest PID bank replaces earlier staged commands. */
     }
     motor_status = MotorOutput_Update(control.motors);
     if (motor_status == MOTOR_BUSY)
@@ -742,6 +1105,8 @@ static bool apply_mixed_output(float roll_correction,
     {
         return false;
     }
+    control.last_motor_update_ms = HAL_GetTick();
+    control.motor_telemetry_commit_ms = control.last_motor_update_ms;
     for (motor = 0U; motor < MOTOR_OUTPUT_MAX_MOTORS; ++motor)
     {
         pulses[motor] = get_legacy_motor_output(motor);
@@ -752,6 +1117,13 @@ static bool apply_mixed_output(float roll_correction,
                             pitch_correction,
                             yaw_correction,
                             active);
+    control.sample_motor_committed = true;
+    if (control.pending_flight_sample_available && active)
+    {
+        complete_flight_telemetry(&control.pending_flight_sample,
+            control.pending_flight_sample.output_sample_matched);
+        control.pending_flight_sample_available = false;
+    }
     return true;
 }
 
@@ -806,6 +1178,8 @@ static void publish_disarmed_telemetry(void)
     uint16_t pulses[MOTOR_OUTPUT_MAX_MOTORS];
     uint8_t motor;
 
+    control.pending_flight_sample_available = false;
+    control.flight_telemetry_available = false;
     for (motor = 0U; motor < MOTOR_OUTPUT_MAX_MOTORS; ++motor)
     {
         pulses[motor] = get_legacy_motor_output(motor);
@@ -871,6 +1245,15 @@ static bool send_flight_telemetry(void)
     uint8_t raw[DRONE_FLIGHT_TELEMETRY_PACKET_SIZE];
     DroneFlightTelemetry telemetry = control.flight_telemetry;
 
+    /* Drop stale/state-changed snapshots, and never repeat one as a new sample. */
+    if ((telemetry.header.session_id != control.active_session) ||
+        (telemetry.state != (uint8_t)control.state) ||
+        ((uint32_t)(HAL_GetTick() - telemetry.header.sender_time_ms) >
+         CONTROL_TELEMETRY_MAX_SAMPLE_AGE_MS))
+    {
+        control.flight_telemetry_available = false;
+        return false;
+    }
     telemetry.header.sequence = control.flight_telemetry_sequence;
     if (DroneProtocol_EncodeFlightTelemetry(&telemetry, raw) !=
         DRONE_PROTOCOL_OK)
@@ -882,6 +1265,7 @@ static bool send_flight_telemetry(void)
         return false;
     }
     ++control.flight_telemetry_sequence;
+    control.flight_telemetry_available = false;
     return true;
 }
 

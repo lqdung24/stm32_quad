@@ -6,7 +6,7 @@ adapter; both rates use the same `MotorOutput` operations below.
 - `MotorDshot_Init()` validates one shared timer, ordered CH1..CH4, TIM3_UP DMA,
   exact bitrate division, and the DShot value range; it derives duty ticks and
   binds the `MotorOutput` vtable.
-- `start()` clears requested/applied values and submits a value-zero frame.
+- `start()` clears requested/applied values and submits the first value-zero frame. `DroneControl` continues zero frames for a timed pre-arm interval before it reports ARMED or accepts positive throttle.
 - `stop()` synchronously aborts DMA, forces CCR1..CCR4 low, closes the logical
   gate, and submits an explicit value-zero frame.
 - `set_throttle/set_all_throttle()` stage normalized commands only.

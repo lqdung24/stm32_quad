@@ -9,6 +9,7 @@
 typedef struct
 {
     uint32_t start_ms;
+    uint32_t last_frame_ms;
     bool started;
     bool failed;
     uint32_t fault;
@@ -18,7 +19,7 @@ typedef struct
     uint32_t timer_clock_hz;
 } AppDshotTest;
 
-/* Exclusive bench owner of the output; call from the 1 ms flight task.
+/* Exclusive bench owner; call from the 1 ms flight task, send every 2 ms.
  * No ARM, radio failsafe or PID in this mode. Power off to stop the bench.
  * Header-only so CubeMX-generated source lists need no modification. */
 static inline void AppDshotTest_Step(AppDshotTest *test,
@@ -52,7 +53,13 @@ static inline void AppDshotTest_Step(AppDshotTest *test,
             return;
         }
         test->start_ms = now_ms;
+        test->last_frame_ms = now_ms;
         test->started = true;
+        return;
+    }
+
+    if ((uint32_t)(now_ms - test->last_frame_ms) < MOTOR_OUTPUT_DSHOT_PERIOD_MS)
+    {
         return;
     }
 
@@ -73,6 +80,7 @@ static inline void AppDshotTest_Step(AppDshotTest *test,
         }
         if (status == MOTOR_OK)
         {
+            test->last_frame_ms = now_ms;
             ++test->frames_completed;
             test->last_value = MotorOutput_GetRawOutput(output, 0U);
             test->dma_error = 0U;

@@ -21,9 +21,9 @@ The source of truth is `stm32cube/Components/DroneProtocol/Inc/dp_protocol.h` pl
 
 ## Packet types in active use
 
-- `CONTROL_COMMAND`: browser to STM32; throttle, roll, pitch, yaw, motor selection and safety flags.
+- `CONTROL_COMMAND`: browser to STM32; throttle, roll, pitch, yaw, motor selection and safety flags. ANGLE bit 2, ACRO bit 3 and MOTOR_TEST bit 5 are mutually exclusive; when all three are clear, the legacy ACRO path is used. MOTOR_TEST requires zero axes and uses AUX1=0 (all) or 1..4 (one motor); other modes require AUX1=0. Wire axes remain ±1000; firmware maps roll/pitch to ±30 degrees in ANGLE or ±200 deg/s in ACRO, yaw to ±150 deg/s in both. No packet layout, scale, or telemetry flag changes.
 - `SYSTEM_STATUS`: STM32 to browser; acknowledged control sequence, requested/applied throttle, PWM, system state, error flags and UART rate.
-- `FLIGHT_TELEMETRY`: STM32 to host; attitude, gyro, rate setpoint, PID correction, motor PWM and validity/activity flags.
+- `FLIGHT_TELEMETRY_SYNC` (type 8): STM32 to host; 58 bytes, payload 40. First 32 payload bytes retain attitude/gyro/rate-setpoint/PID/motor layout. Uint32 sample ID and motor commit time are appended at raw offsets 48/52; CRC moves to 56. Header time is IMU sample time; bit 5 marks matched IMU/PID/output. Legacy `FLIGHT_TELEMETRY` type 7 stays 50 bytes with the old flag mask. C/browser/Python decoders accept both exact layouts; encoders emit type 8. Shared bridge capacity is 58 bytes, so both ESPs must be rebuilt/flashed before using new STM32 telemetry.
 
 Consult `DroneProtocol/function-flow.md` for encode/decode flow and `dp_protocol.h` for exact sizes/offsets/enums.
 

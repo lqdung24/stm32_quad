@@ -38,14 +38,11 @@ Components/App/Src/app.o: ../Components/App/Src/app.c \
  ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_pcd.h \
  ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_ll_usb.h \
  ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_pcd_ex.h \
- ../Components/App/Inc/app_rtos.h ../Components/App/Inc/app_dshot_test.h \
- ../Components/App/Inc/../../Motor/Inc/motor.h \
- ../Components/Attitude/Inc/attitude.h \
+ ../Components/App/Inc/app_rtos.h ../Components/Attitude/Inc/attitude.h \
  ../Components/DroneControl/Inc/drone_control.h \
  ../Components/DroneControl/Inc/../../Motor/Inc/motor.h \
  ../Components/DroneControl/Inc/../../RateControl/Inc/rate_control.h \
- ../Components/ICM20948/Inc/icm20948.h \
- ../Components/Mahony9/Inc/mahony9.h \
+ ../Components/ICM20948/Inc/icm20948.h ../Components/Mahony/Inc/mahony.h \
  ../Components/App/Src/../../Motor/Inc/motor.h \
  ../Components/App/Src/../../MotorDshot/Inc/motor_dshot.h \
  ../Components/App/Src/../../MotorDshot/Inc/../../Motor/Inc/motor.h \
@@ -96,14 +93,12 @@ Components/App/Src/app.o: ../Components/App/Src/app.c \
 ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_ll_usb.h:
 ../Drivers/STM32H7xx_HAL_Driver/Inc/stm32h7xx_hal_pcd_ex.h:
 ../Components/App/Inc/app_rtos.h:
-../Components/App/Inc/app_dshot_test.h:
-../Components/App/Inc/../../Motor/Inc/motor.h:
 ../Components/Attitude/Inc/attitude.h:
 ../Components/DroneControl/Inc/drone_control.h:
 ../Components/DroneControl/Inc/../../Motor/Inc/motor.h:
 ../Components/DroneControl/Inc/../../RateControl/Inc/rate_control.h:
 ../Components/ICM20948/Inc/icm20948.h:
-../Components/Mahony9/Inc/mahony9.h:
+../Components/Mahony/Inc/mahony.h:
 ../Components/App/Src/../../Motor/Inc/motor.h:
 ../Components/App/Src/../../MotorDshot/Inc/motor_dshot.h:
 ../Components/App/Src/../../MotorDshot/Inc/../../Motor/Inc/motor.h:

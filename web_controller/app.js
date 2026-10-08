@@ -1,8 +1,10 @@
-const MAGIC = 0xA55A, VERSION = 1, CONTROL = 1, STATUS = 2, FLIGHT_TELEMETRY = 7;
-const ARM = 1, ESTOP = 2, ACRO_MODE = 1 << 3, FAILSAFE_ACTIVE = 1 << 9;
-const TELEMETRY_SIZE = 50, TELEMETRY_PAYLOAD_SIZE = 32;
+const MAGIC = 0xA55A, VERSION = 1, CONTROL = 1, STATUS = 2, FLIGHT_TELEMETRY = 7, FLIGHT_TELEMETRY_SYNC = 8;
+const ARM = 1, ESTOP = 2, ANGLE_MODE = 1 << 2, ACRO_MODE = 1 << 3, MOTOR_TEST = 1 << 5, FAILSAFE_ACTIVE = 1 << 9;
+const TELEMETRY_SIZE = 58, TELEMETRY_PAYLOAD_SIZE = 40;
+const TELEMETRY_LEGACY_SIZE = 50, TELEMETRY_LEGACY_PAYLOAD_SIZE = 32;
 const TELEMETRY_STATE_MASK = 0x0007, TELEMETRY_ACTUATORS_ACTIVE = 1 << 3;
-const TELEMETRY_ATTITUDE_VALID = 1 << 4, TELEMETRY_ALLOWED_FLAGS = 0x001f;
+const TELEMETRY_ATTITUDE_VALID = 1 << 4, TELEMETRY_OUTPUT_SAMPLE_MATCHED = 1 << 5;
+const TELEMETRY_ALLOWED_FLAGS = 0x003f, TELEMETRY_LEGACY_ALLOWED_FLAGS = 0x001f;
 const TELEMETRY_HISTORY_MS = 60000, MAX_TELEMETRY_SAMPLES = 4000;
 const MAX_RECORDED_SAMPLES = 180000;
 const UART_LINK_LOST = 1 << 1;
@@ -17,6 +19,7 @@ let lastControlSequence = null, lastAcknowledgedAt = 0;
 let armRequested = false, emergency = true, deadman = false, requested = 0;
 let rollCommand = 0, pitchCommand = 0, yawCommand = 0;
 let controlMode = 'test', motorMode = 'all', selectedMotor = 1;
+let flightMode = 'angle';
 let lastStatusAt = 0, lastStatus = null;
 let armTimer = null, serialReaderActive = false, cobsBuffer = [];
 let telemetryHistory = [], recordedTelemetry = [], telemetryArrivalTimes = [];
@@ -25,6 +28,7 @@ let lastTelemetrySequence = null, lastTelemetrySession = null, telemetryRecordin
 
 const telemetryColumns = [
   'host_time_iso','host_time_ms','stm_time_ms','sequence','session_id','state','state_name',
+  'sample_id','sample_time_ms','motor_commit_time_ms','output_sample_matched','motor_commit_delay_ms',
   'actuators_active','attitude_valid','roll_deg','pitch_deg','yaw_deg',
   'gyro_roll_rad_s','gyro_pitch_rad_s','gyro_yaw_rad_s',
   'setpoint_roll_rad_s','setpoint_pitch_rad_s','setpoint_yaw_rad_s',
@@ -68,13 +72,14 @@ function crc16(data, length) {
 
 function createControl() {
   const data = new Uint8Array(30), view = new DataView(data.buffer);
-  const flags = emergency ? ESTOP : ((armRequested ? ARM : 0) | (controlMode === 'pilot' ? ACRO_MODE : 0));
+  const modeFlag = flightMode === 'angle' ? ANGLE_MODE : ACRO_MODE;
+  const flags = emergency ? ESTOP : ((armRequested ? ARM : 0) | (controlMode === 'pilot' ? modeFlag : MOTOR_TEST));
   const throttleEnabled = controlMode === 'pilot' || deadman;
   const throttle = (!emergency && armRequested && throttleEnabled) ? requested : 0;
-  const roll = controlMode === 'pilot' && armRequested ? rollCommand : 0;
-  const pitch = controlMode === 'pilot' && armRequested ? pitchCommand : 0;
-  const yaw = controlMode === 'pilot' && armRequested ? yawCommand : 0;
-  const motorSelection = controlMode === 'test' ? (motorMode === 'all' ? 0 : selectedMotor) : 0;
+  const roll = !emergency && controlMode === 'pilot' && armRequested ? rollCommand : 0;
+  const pitch = !emergency && controlMode === 'pilot' && armRequested ? pitchCommand : 0;
+  const yaw = !emergency && controlMode === 'pilot' && armRequested ? yawCommand : 0;
+  const motorSelection = !emergency && controlMode === 'test' ? (motorMode === 'all' ? 0 : selectedMotor) : 0;
 
   view.setUint16(0, MAGIC, true);
   view.setUint8(2, VERSION); view.setUint8(3, CONTROL);
@@ -144,7 +149,7 @@ function drawStickPositions() {
   const rightRadius = Math.max(0, $('right-stick').clientWidth / 2 - $('right-knob').offsetWidth / 2 - 5);
   const leftY = leftRadius * (1 - 2 * requested / THROTTLE_MAX);
   setKnob($('left-knob'), leftRadius * yawCommand / AXIS_MAX, leftY);
-  setKnob($('right-knob'), rightRadius * rollCommand / AXIS_MAX, -rightRadius * pitchCommand / AXIS_MAX);
+  setKnob($('right-knob'), rightRadius * rollCommand / AXIS_MAX, rightRadius * pitchCommand / AXIS_MAX);
 }
 
 function resetInputs() {
@@ -162,10 +167,11 @@ function setMotorModeLocked(locked) {
 }
 
 function updateControlAvailability() {
-  $('slider').disabled = !armRequested || controlMode !== 'test';
+  const ready = armRequested && lastStatus?.state === 2;
+  $('slider').disabled = !ready || controlMode !== 'test';
   ['left-stick','right-stick'].forEach(id => {
-    $(id).classList.toggle('locked', !armRequested || controlMode !== 'pilot');
-    $(id).setAttribute('aria-disabled', String(!armRequested || controlMode !== 'pilot'));
+    $(id).classList.toggle('locked', !ready || controlMode !== 'pilot');
+    $(id).setAttribute('aria-disabled', String(!ready || controlMode !== 'pilot'));
   });
 }
 
@@ -187,13 +193,19 @@ function renderControlMode() {
   $('right-stick-panel').hidden = !pilot;
   $('test-panel').hidden = pilot;
   $('test-options').hidden = pilot;
-  $('mode-badge').textContent = pilot ? 'JOYSTICK · RATE' : 'TEST MOTOR';
+  $('flight-options').hidden = !pilot;
+  $('flight-mode').value = flightMode;
+  $('flight-mode-hint').textContent = flightMode === 'angle'
+    ? 'Roll/pitch ±30°; thả cần phải để tự cân bằng. Yaw điều khiển tốc độ.'
+    : 'Roll/pitch điều khiển tốc độ ±200°/s; thả cần phải không tự cân bằng.';
+  $('mode-badge').textContent = pilot ? `JOYSTICK · ${flightMode.toUpperCase()}` : 'TEST MOTOR';
   $('mode-toggle').textContent = pilot ? 'MỞ TEST MOTOR' : 'MỞ JOYSTICK';
   updateControlAvailability();
   requestAnimationFrame(drawStickPositions);
 }
 
 function forceLocalSafe(message, useEmergency) {
+  if (armTimer !== null) { clearTimeout(armTimer); armTimer = null; }
   armRequested = false;
   emergency = useEmergency;
   resetInputs();
@@ -202,6 +214,21 @@ function forceLocalSafe(message, useEmergency) {
   document.querySelectorAll('.motor-pwm').forEach(item => item.textContent = '1000 µs');
   if (message) $('message').textContent = message;
 }
+
+function emergencyStop() {
+  forceLocalSafe('EMERGENCY STOP đã gửi.', true);
+  sendNow();
+}
+
+$('flight-mode').addEventListener('change', () => {
+  const nextMode = $('flight-mode').value;
+  if (nextMode !== 'angle' && nextMode !== 'acro') return;
+  forceLocalSafe('Đã DISARM và đưa mọi lệnh về 0 khi đổi chế độ bay.', emergency);
+  sendNow();
+  flightMode = nextMode;
+  renderControlMode();
+  sendNow();
+});
 
 $('mode-toggle').addEventListener('click', () => {
   const nextMode = controlMode === 'test' ? 'pilot' : 'test';
@@ -288,7 +315,7 @@ function decodePacket(data) {
   if (view.getUint16(0,true) !== MAGIC || view.getUint8(2) !== VERSION) return;
   const type = view.getUint8(3);
   if (type === STATUS) decodeStatus(data);
-  else if (type === FLIGHT_TELEMETRY) decodeFlightTelemetry(data);
+  else if (type === FLIGHT_TELEMETRY || type === FLIGHT_TELEMETRY_SYNC) decodeFlightTelemetry(data);
 }
 
 function decodeStatus(data) {
@@ -308,7 +335,11 @@ function decodeStatus(data) {
     const acknowledgementLag = (lastControlSequence - acknowledgedSequence) & 0xffff;
     if (acknowledgementLag <= MAX_ACK_LAG_PACKETS) lastAcknowledgedAt = lastStatusAt;
   }
+  const previousState = lastStatus?.state;
   lastStatus = { state,errors };
+  updateControlAvailability();
+  if (armRequested && state === 2 && previousState !== 2)
+    $('message').textContent = 'STM32 đã ARM; motor sẵn sàng nhận ga.';
   setStatus('state',stateNames[state] || 'INVALID',state === 2 ? 'good' : state >= 3 ? 'bad' : '');
   setStatus('applied',`${applied} / ${THROTTLE_MAX}`);
   setStatus('rate',`${view.getUint16(33,true)} pkt/s`);
@@ -327,16 +358,19 @@ function decodeFlightTelemetry(data) {
     updateTelemetryStats();
     return false;
   };
-  if (data.length !== TELEMETRY_SIZE) return reject();
+  const legacy = data.length === TELEMETRY_LEGACY_SIZE;
+  if (!legacy && data.length !== TELEMETRY_SIZE) return reject();
 
   const view = new DataView(data.buffer,data.byteOffset,data.byteLength);
   const flags = view.getUint16(8,true);
   const state = flags & TELEMETRY_STATE_MASK;
   if (view.getUint16(0,true) !== MAGIC || view.getUint8(2) !== VERSION ||
-      view.getUint8(3) !== FLIGHT_TELEMETRY ||
-      view.getUint8(10) !== TELEMETRY_PAYLOAD_SIZE || view.getUint8(11) !== 0 ||
-      (flags & ~TELEMETRY_ALLOWED_FLAGS) !== 0 || state >= stateNames.length ||
-      view.getUint16(48,true) !== crc16(data,48)) return reject();
+      view.getUint8(3) !== (legacy ? FLIGHT_TELEMETRY : FLIGHT_TELEMETRY_SYNC) ||
+      view.getUint8(10) !== (legacy ? TELEMETRY_LEGACY_PAYLOAD_SIZE : TELEMETRY_PAYLOAD_SIZE) ||
+      view.getUint8(11) !== 0 ||
+      (flags & ~(legacy ? TELEMETRY_LEGACY_ALLOWED_FLAGS : TELEMETRY_ALLOWED_FLAGS)) !== 0 ||
+      state >= stateNames.length ||
+      view.getUint16(data.length-2,true) !== crc16(data,data.length-2)) return reject();
 
   const motorPwmUs = [40,42,44,46].map(offset => view.getUint16(offset,true));
   if (motorPwmUs.some(pulse => pulse < 1000 || pulse > 2000)) return reject();
@@ -351,6 +385,9 @@ function decodeFlightTelemetry(data) {
   const pidOutput = [34,36,38].map(offset => view.getInt16(offset,true) / 100);
   const sample = {
     receivedAtMs, wallTimeMs, stmTimeMs:view.getUint32(12,true),
+    sampleId:legacy ? null : view.getUint32(48,true),
+    motorCommitTimeMs:legacy ? null : view.getUint32(52,true),
+    outputSampleMatched:!legacy && (flags & TELEMETRY_OUTPUT_SAMPLE_MATCHED) !== 0,
     sequence:sequenceValue, sessionId, state,
     actuatorsActive:(flags & TELEMETRY_ACTUATORS_ACTIVE) !== 0,
     attitudeValid:(flags & TELEMETRY_ATTITUDE_VALID) !== 0,
@@ -358,6 +395,8 @@ function decodeFlightTelemetry(data) {
     rateErrorRadS:setpointRadS.map((target,index) => target - gyroRadS[index]),
     pidOutput, motorPwmUs
   };
+  sample.motorCommitDelayMs = sample.outputSampleMatched
+    ? (sample.motorCommitTimeMs - sample.stmTimeMs) >>> 0 : null;
 
   if (lastTelemetrySession === sessionId && lastTelemetrySequence !== null) {
     const delta = (sequenceValue - lastTelemetrySequence) & 0xffff;
@@ -400,7 +439,9 @@ function updateTelemetryStats() {
   $('save-telemetry-csv').disabled = recordedTelemetry.length === 0;
   $('save-telemetry-txt').disabled = recordedTelemetry.length === 0;
   $('telemetry-summary').textContent = latest
-    ? `${stateNames[latest.state]} · ${telemetryArrivalTimes.length} Hz · seq ${latest.sequence}`
+    ? `${stateNames[latest.state]} · ${telemetryArrivalTimes.length} Hz · seq ${latest.sequence}` +
+      (latest.sampleId === null ? ' · legacy' : ` · sample ${latest.sampleId}`) +
+      (latest.outputSampleMatched ? ` · commit +${latest.motorCommitDelayMs} ms` : '')
     : 'Chưa có dữ liệu';
 }
 
@@ -526,6 +567,10 @@ function telemetryRow(sample) {
   return {
     host_time_iso:new Date(sample.wallTimeMs).toISOString(), host_time_ms:sample.wallTimeMs,
     stm_time_ms:sample.stmTimeMs, sequence:sample.sequence, session_id:sample.sessionId,
+    sample_id:sample.sampleId ?? '', sample_time_ms:sample.stmTimeMs,
+    motor_commit_time_ms:sample.motorCommitTimeMs ?? '',
+    output_sample_matched:sample.outputSampleMatched,
+    motor_commit_delay_ms:sample.motorCommitDelayMs ?? '',
     state:sample.state, state_name:stateNames[sample.state],
     actuators_active:sample.actuatorsActive, attitude_valid:sample.attitudeValid,
     roll_deg:sample.attitudeDeg[0], pitch_deg:sample.attitudeDeg[1], yaw_deg:sample.attitudeDeg[2],
@@ -633,11 +678,12 @@ function updateLeftStick(event) {
 function updateRightStick(event) {
   const vector = pointerVector(event,$('right-stick'));
   rollCommand = Math.round(applyAxisDeadzone(vector.x) * AXIS_MAX);
-  pitchCommand = Math.round(applyAxisDeadzone(-vector.y) * AXIS_MAX);
+  // BODY FRD: positive pitch is nose-up; pushing forward commands nose-down.
+  pitchCommand = Math.round(applyAxisDeadzone(vector.y) * AXIS_MAX);
   updateCommandUi(); drawStickPositions();
 }
 function startStick(event,side) {
-  if (!armRequested || controlMode !== 'pilot') {
+  if (!armRequested || lastStatus?.state !== 2 || controlMode !== 'pilot') {
     $('message').textContent = 'Joystick đang khóa. Cần kết nối và giữ ARM 1 giây.';
     return;
   }
@@ -700,6 +746,11 @@ function isTextEntryTarget(target) {
   return target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"]');
 }
 window.addEventListener('keydown', event => {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    emergencyStop();
+    return;
+  }
   if ((event.key !== 'ArrowUp' && event.key !== 'ArrowDown') ||
       isTextEntryTarget(event.target) || !keyboardThrottleEnabled()) return;
 
@@ -709,7 +760,7 @@ window.addEventListener('keydown', event => {
   updateCommandUi();
   drawStickPositions();
   sendNow();
-});
+}, { capture: true });
 
 document.querySelectorAll('[data-action="arm"]').forEach(button => {
   button.addEventListener('pointerdown', () => {
@@ -719,10 +770,13 @@ document.querySelectorAll('[data-action="arm"]').forEach(button => {
     }
     $('message').textContent = 'Tiếp tục giữ để ARM…';
     armTimer = setTimeout(() => {
+      armTimer = null;
+      if (!canArm()) {
+        $('message').textContent = 'Đã hủy ARM: trạng thái hoặc lệnh điều khiển đã thay đổi.';
+        return;
+      }
       armRequested = true; setMotorModeLocked(false); updateControlAvailability(); sendNow();
-      $('message').textContent = controlMode === 'pilot'
-        ? 'Đã ARM. Kéo cần trái từ vị trí thấp nhất; thả tay giữ throttle, yaw tự về giữa.'
-        : 'Đã ARM; giữ slider để tăng PWM.';
+      $('message').textContent = 'Đang ARM: chờ STM32 gửi DShot 0 và báo sẵn sàng…';
       armTimer = null;
     },1000);
   });
@@ -733,9 +787,7 @@ document.querySelectorAll('[data-action="arm"]').forEach(button => {
 document.querySelectorAll('[data-action="disarm"]').forEach(button => button.addEventListener('click',() => {
   forceLocalSafe('Đã DISARM toàn bộ motor.',false); sendNow();
 }));
-document.querySelectorAll('[data-action="stop"]').forEach(button => button.addEventListener('click',() => {
-  forceLocalSafe('EMERGENCY STOP đã gửi.',true); sendNow();
-}));
+document.querySelectorAll('[data-action="stop"]').forEach(button => button.addEventListener('click', emergencyStop));
 
 window.addEventListener('pagehide',() => {
   emergency = true; armRequested = false; resetInputs(); sendNow();

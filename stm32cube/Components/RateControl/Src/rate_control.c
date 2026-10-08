@@ -7,6 +7,7 @@
 #define RATE_CONTROL_MIN_DT_S 0.0005f
 #define RATE_CONTROL_MAX_DT_S 0.050f
 #define RATE_CONTROL_TWO_PI   6.28318530718f
+#define RATE_CONTROL_DEG_TO_RAD 0.01745329252f
 
 static bool config_valid(const RateControlConfig *config);
 static float clampf(float value, float minimum, float maximum);
@@ -68,6 +69,142 @@ void RateControl_SetCommand(RateControl *control,
     control->debug.target_rad_s[axis] =
         normalized * control->config.maximum_rate_rad_s[axis];
   }
+}
+
+bool RateControl_SetTargetRates(
+    RateControl *control,
+    const float target_rad_s[RATE_CONTROL_AXIS_COUNT])
+{
+  uint8_t axis;
+
+  if ((control == NULL) || !control->initialized)
+  {
+    return false;
+  }
+  if (target_rad_s == NULL)
+  {
+    RateControl_Reset(control);
+    return false;
+  }
+  for (axis = 0U; axis < RATE_CONTROL_AXIS_COUNT; ++axis)
+  {
+    if (!isfinite(target_rad_s[axis]))
+    {
+      RateControl_Reset(control);
+      return false;
+    }
+  }
+  for (axis = 0U; axis < RATE_CONTROL_AXIS_COUNT; ++axis)
+  {
+    control->debug.target_rad_s[axis] =
+        clampf(target_rad_s[axis],
+               -control->config.maximum_rate_rad_s[axis],
+               control->config.maximum_rate_rad_s[axis]);
+  }
+  return true;
+}
+
+bool RateControl_SetAngleCommand(RateControl *control,
+                                 int16_t roll,
+                                 int16_t pitch,
+                                 int16_t yaw,
+                                 float measured_roll_deg,
+                                 float measured_pitch_deg)
+{
+  float current[4];
+  float desired[4];
+  float error[4];
+  float target_rad_s[RATE_CONTROL_AXIS_COUNT];
+  float half_roll;
+  float half_pitch;
+  float cr;
+  float sr;
+  float cp;
+  float sp;
+  float norm;
+  float leveling_rate;
+  uint8_t component;
+
+  if ((control == NULL) || !control->initialized)
+  {
+    return false;
+  }
+  if (!isfinite(measured_roll_deg) || !isfinite(measured_pitch_deg) ||
+      (fabsf(measured_roll_deg) > 180.0f) ||
+      (fabsf(measured_pitch_deg) > 90.0f))
+  {
+    RateControl_Reset(control);
+    return false;
+  }
+
+  half_roll = 0.5f * measured_roll_deg * RATE_CONTROL_DEG_TO_RAD;
+  half_pitch = 0.5f * measured_pitch_deg * RATE_CONTROL_DEG_TO_RAD;
+  cr = cosf(half_roll);
+  sr = sinf(half_roll);
+  cp = cosf(half_pitch);
+  sp = sinf(half_pitch);
+  current[0] = cp * cr;
+  current[1] = cp * sr;
+  current[2] = sp * cr;
+  current[3] = -sp * sr;
+
+  half_roll = 0.5f * RATE_CONTROL_ANGLE_MAX_DEG * RATE_CONTROL_DEG_TO_RAD *
+      clampf((float)roll / RATE_CONTROL_COMMAND_LIMIT, -1.0f, 1.0f);
+  half_pitch = 0.5f * RATE_CONTROL_ANGLE_MAX_DEG * RATE_CONTROL_DEG_TO_RAD *
+      clampf((float)pitch / RATE_CONTROL_COMMAND_LIMIT, -1.0f, 1.0f);
+  cr = cosf(half_roll);
+  sr = sinf(half_roll);
+  cp = cosf(half_pitch);
+  sp = sinf(half_pitch);
+  desired[0] = cp * cr;
+  desired[1] = cp * sr;
+  desired[2] = sp * cr;
+  desired[3] = -sp * sr;
+
+  /*
+   * q_error = conjugate(q_current) * q_desired: rotation in BODY axes.
+   * Both attitudes use the same yaw, which cancels from their relative
+   * quaternion. This avoids reliance on unobservable Mahony6 yaw heading.
+   */
+  error[0] = current[0] * desired[0] + current[1] * desired[1] +
+             current[2] * desired[2] + current[3] * desired[3];
+  error[1] = current[0] * desired[1] - current[1] * desired[0] -
+             current[2] * desired[3] + current[3] * desired[2];
+  error[2] = current[0] * desired[2] + current[1] * desired[3] -
+             current[2] * desired[0] - current[3] * desired[1];
+  error[3] = current[0] * desired[3] - current[1] * desired[2] +
+             current[2] * desired[1] - current[3] * desired[0];
+  norm = sqrtf(error[0] * error[0] + error[1] * error[1] +
+               error[2] * error[2] + error[3] * error[3]);
+  if (!isfinite(norm) || (norm <= 0.0f))
+  {
+    RateControl_Reset(control);
+    return false;
+  }
+  if (error[0] < 0.0f)
+  {
+    norm = -norm;
+  }
+  for (component = 0U; component < 4U; ++component)
+  {
+    error[component] /= norm;
+  }
+  target_rad_s[RATE_CONTROL_ROLL] =
+      2.0f * RATE_CONTROL_ANGLE_KP_PER_S * error[1];
+  target_rad_s[RATE_CONTROL_PITCH] =
+      2.0f * RATE_CONTROL_ANGLE_KP_PER_S * error[2];
+  leveling_rate = hypotf(target_rad_s[RATE_CONTROL_ROLL],
+                         target_rad_s[RATE_CONTROL_PITCH]);
+  if (leveling_rate > RATE_CONTROL_ANGLE_MAX_RATE_RAD_S)
+  {
+    const float scale = RATE_CONTROL_ANGLE_MAX_RATE_RAD_S / leveling_rate;
+    target_rad_s[RATE_CONTROL_ROLL] *= scale;
+    target_rad_s[RATE_CONTROL_PITCH] *= scale;
+  }
+  target_rad_s[RATE_CONTROL_YAW] =
+      clampf((float)yaw / RATE_CONTROL_COMMAND_LIMIT, -1.0f, 1.0f) *
+      control->config.maximum_rate_rad_s[RATE_CONTROL_YAW];
+  return RateControl_SetTargetRates(control, target_rad_s);
 }
 
 bool RateControl_Update(RateControl *control,

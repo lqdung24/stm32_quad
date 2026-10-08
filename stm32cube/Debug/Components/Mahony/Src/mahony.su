@@ -1,5 +1,7 @@
-../Components/Mahony/Src/mahony.c:11:6:Mahony_Init	24	static
-../Components/Mahony/Src/mahony.c:29:6:Mahony_InitFromAccel	72	static
-../Components/Mahony/Src/mahony.c:76:6:Mahony_Update	88	static
-../Components/Mahony/Src/mahony.c:155:6:Mahony_GetEulerDegrees	24	static
-../Components/Mahony/Src/mahony.c:178:14:Mahony_Clamp	24	static
+../Components/Mahony/Src/mahony.c:13:6:Mahony_Init	48	static
+../Components/Mahony/Src/mahony.c:37:6:Mahony_InitFromAccel	72	static
+../Components/Mahony/Src/mahony.c:93:6:Mahony_Update	88	static
+../Components/Mahony/Src/mahony.c:187:6:Mahony_GetEulerDegrees	40	static
+../Components/Mahony/Src/mahony.c:216:13:Mahony_ConfigValid	16	static
+../Components/Mahony/Src/mahony.c:229:13:Mahony_StateValid	24	static
+../Components/Mahony/Src/mahony.c:246:14:Mahony_Clamp	24	static

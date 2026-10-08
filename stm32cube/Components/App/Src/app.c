@@ -8,13 +8,14 @@ static AppDshotTest app_dshot_test;
 #include "attitude.h"
 #include "drone_control.h"
 #include "icm20948.h"
-#include "mahony9.h"
+#include "mahony.h"
 #include "../../Motor/Inc/motor.h"
 #include "../../MotorDshot/Inc/motor_dshot.h"
 #include "../../MotorDshot300/Inc/motor_dshot300.h"
 #include "../../MotorPWM/Inc/motor_pwm.h"
 #include "../../PwmTimer/Inc/pwm_timer.h"
 #include <limits.h>
+#include <math.h>
 #include <stdio.h>
 
 #if APP_MOTOR_OUTPUT_PROTOCOL == APP_MOTOR_OUTPUT_DSHOT300
@@ -119,16 +120,14 @@ static uint32_t app_timing_pipeline_min_cycles = UINT32_MAX;
 static uint32_t app_timing_pipeline_max_cycles;
 static uint64_t app_timing_pipeline_total_cycles;
 static uint8_t app_cycle_counter_available;
-static Mahony9_Handle_t mahony9;
-static Mahony9_Euler_t attitude;
-static const Mahony9_Config_t mahony9_config = {
+static Mahony_Handle_t mahony;
+static Mahony_Euler_t attitude;
+static const Mahony_Config_t mahony_config = {
     .kp = 2.0f,
     .ki = 0.05f,
     .integral_limit_rad_s = 0.1f,
     .accel_min_norm = 0.80f,
-    .accel_max_norm = 1.20f,
-    .mag_min_norm = 2000.0f,
-    .mag_max_norm = 7000.0f};
+    .accel_max_norm = 1.20f};
 static char usb_tx_buffer[384];
 #if APP_UART1_RX_LOG_ENABLE
 static char uart_log_tx_buffer[80];
@@ -409,6 +408,8 @@ void App_FlightControlStep(uint32_t now_ms)
     if ((icm20948_status != ICM20948_OK) &&
         ((now_ms - icm20948_last_reinit_ms) >= APP_ICM20948_REINIT_PERIOD_MS))
     {
+        /* Stop armed output before sensor setup/calibration can block. */
+        DroneControl_InvalidateImuSample();
         icm20948_last_reinit_ms = now_ms;
         App_TryInitICM20948();
         App_CalibrateGyro();
@@ -418,6 +419,8 @@ void App_FlightControlStep(uint32_t now_ms)
     {
         App_UpdateAttitude();
     }
+
+    DroneControl_ServiceMotorOutput(HAL_GetTick());
 
     /*
      * Service the lower-bandwidth magnetometer only after the gyro/rate loop.
@@ -861,7 +864,10 @@ static void App_TryInitICM20948(void)
     if (icm20948_status == ICM20948_OK)
     {
         icm20948_mag_valid = 0U;
-        Mahony9_Init(&mahony9, &mahony9_config);
+        Mahony_Init(&mahony, &mahony_config);
+        attitude = (Mahony_Euler_t){0};
+        app_has_sample_cycle = 0U;
+        app_last_sample_cycle = 0U;
         length = snprintf(usb_tx_buffer, sizeof(usb_tx_buffer),
                           "ICM20948 init OK\r\n");
         App_IcmLog(usb_tx_buffer, length);
@@ -1031,9 +1037,8 @@ static void App_UpdateAttitude(void)
     app_last_sample_cycle = sample_cycle;
 
     /*
-     * The inner rate loop uses only the calibrated gyroscope, so it must keep
-     * working even when the magnetometer is unavailable and Mahony has not
-     * initialized an absolute attitude yet.
+     * Both loops use this fresh body-frame gyro sample. Mahony6 supplies
+     * roll/pitch before the angle loop runs; Acro still uses gyro alone.
      */
     gyro_sensor_raw.x = icm20948_raw.gyro.x;
     gyro_sensor_raw.y = icm20948_raw.gyro.y;
@@ -1044,73 +1049,46 @@ static void App_UpdateAttitude(void)
     gyro_body_rad_s = Attitude_GyroRawToBodyRadS(gyro_sensor_raw,
                                                  gyro_bias_sensor_raw,
                                                  APP_ICM20948_GYRO_LSB_PER_DPS);
-    pid_start_cycle = DWT->CYCCNT;
-    pid_updated = DroneControl_UpdateBodyRates(gyro_body_rad_s.x,
-                                               gyro_body_rad_s.y,
-                                               gyro_body_rad_s.z,
-                                               dt_s);
-    pid_exec_cycles = DWT->CYCCNT - pid_start_cycle;
-
-    if (!mahony9.initialized)
+    /* A stalled sample must be rejected before reinitializing on a later sample. */
+    if (!isfinite(dt_s) || (dt_s < MAHONY_MIN_DT_S) || (dt_s > MAHONY_MAX_DT_S))
     {
-        if ((icm20948_mag_valid != 0U) &&
-            Mahony9_InitFromAccelMag(&mahony9,
-                                     gravity_body.x,
-                                     gravity_body.y,
-                                     gravity_body.z,
-                                     (float)icm20948_mag_body_cal_cuT.x,
-                                     (float)icm20948_mag_body_cal_cuT.y,
-                                     (float)icm20948_mag_body_cal_cuT.z))
-        {
-            (void)Mahony9_GetEulerDegrees(&mahony9, &attitude);
-        }
-        DroneControl_PublishFlightTelemetrySample(
-            icm20948_last_sample_ms,
-            mahony9.initialized,
-            attitude.roll,
-            attitude.pitch,
-            attitude.yaw,
-            gyro_body_rad_s.x,
-            gyro_body_rad_s.y,
-            gyro_body_rad_s.z);
-        App_RecordSampleTiming(sample_cycle,
-                               imu_read_cycles,
-                               DWT->CYCCNT - pipeline_start_cycle,
-                               pid_updated,
-                               pid_exec_cycles);
-        return;
+        mahony.initialized = false;
+        updated = false;
     }
-
-    if (icm20948_mag_valid != 0U)
+    else if (!mahony.initialized)
     {
-        updated = Mahony9_Update(&mahony9,
-                                 gyro_body_rad_s.x,
-                                 gyro_body_rad_s.y,
-                                 gyro_body_rad_s.z,
-                                 gravity_body.x,
-                                 gravity_body.y,
-                                 gravity_body.z,
-                                 (float)icm20948_mag_body_cal_cuT.x,
-                                 (float)icm20948_mag_body_cal_cuT.y,
-                                 (float)icm20948_mag_body_cal_cuT.z,
-                                 dt_s);
+        updated = Mahony_InitFromAccel(&mahony,
+                                       gravity_body.x,
+                                       gravity_body.y,
+                                       gravity_body.z);
     }
     else
     {
-        updated = Mahony9_UpdateImu(&mahony9,
-                                    gyro_body_rad_s.x,
-                                    gyro_body_rad_s.y,
-                                    gyro_body_rad_s.z,
-                                    gravity_body.x,
-                                    gravity_body.y,
-                                    gravity_body.z,
-                                    dt_s);
+        updated = Mahony_Update(&mahony,
+                                gyro_body_rad_s.x,
+                                gyro_body_rad_s.y,
+                                gyro_body_rad_s.z,
+                                gravity_body.x,
+                                gravity_body.y,
+                                gravity_body.z,
+                                dt_s);
+    }
+    updated = updated && Mahony_GetEulerDegrees(&mahony, &attitude);
+    if (!updated)
+    {
+        mahony.initialized = false;
     }
 
-    if (updated)
-    {
-        (void)Mahony9_GetEulerDegrees(&mahony9, &attitude);
-    }
+    pid_start_cycle = DWT->CYCCNT;
+    pid_updated = DroneControl_UpdateFlightSample(icm20948_last_sample_ms,
+                                                  updated,
+                                                  attitude.roll,
+                                                  attitude.pitch,
+                                                  gyro_body_rad_s.x,
+                                                  gyro_body_rad_s.y,
+                                                  gyro_body_rad_s.z,
+                                                  dt_s);
+    pid_exec_cycles = DWT->CYCCNT - pid_start_cycle;
     DroneControl_PublishFlightTelemetrySample(icm20948_last_sample_ms,
                                               updated,
                                               attitude.roll,
